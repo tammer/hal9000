@@ -4,8 +4,8 @@ Output a two-column HTML table with exactly these rows (one row per field). Do n
 
 | Field | Value |
 |---|---|
-| Name | company name |
-| Founding date | year or date if stated in the documents; otherwise `not available` |
+| Name | company name. if we know the compnay website, make this a link to its website|
+| Founding date | figure out roughly when the company was founded based on information in the documents. if absolute dates are unknown, a relative founding date is fine.  e.g. "founded last year". If there is no way to know, just say "unknown" |
 | Funding to date | total raised if stated; if they founds have actually stated that no money has been raise, than say $0. otherwise `not available` |
 | Founders | founder names as HTML links to LinkedIn when a URL is present in the documents; plain text otherwise. Separate multiple founders with commas. |
 
