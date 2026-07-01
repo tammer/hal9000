@@ -6,7 +6,7 @@ Output a two-column HTML table with exactly these rows (one row per field). Do n
 |---|---|
 | Name | company name |
 | Founding date | year or date if stated in the documents; otherwise `not available` |
-| Funding to date | total raised if stated; otherwise `not available` |
+| Funding to date | total raised if stated; if they founds have actually stated that no money has been raise, than say $0. otherwise `not available` |
 | Founders | founder names as HTML links to LinkedIn when a URL is present in the documents; plain text otherwise. Separate multiple founders with commas. |
 
 Use `<table>`, `<tr>`, and `<td>` only. First column = field label. Second column = value.
@@ -29,7 +29,9 @@ Start with a two-column HTML table for quantitative metrics. Include a row only 
 
 Use `not available` for any metric not found in the documents. Do not guess or infer.
 
-After the table, add at most one short paragraph (2–3 sentences) for qualitative traction only if the documents mention it (e.g. distribution model, growth drivers). Do not repeat numbers already in the table. Do not use bullet lists for metrics.
+include additional metrics as necessary based on how the company measures its traction. for example, a marketplace might talk about GMV. whatever metrics the company talks about should be in the table. do not include metrics unrelated to traction.
+
+
 
 # Why Now and Right to Win
 
@@ -43,7 +45,7 @@ Report what the founders claim and what the documents support. Do **not** make y
 
 each document that is a transcripts includes a section at the top that includes date, meeting attendees and a URL for the meeting.
 
-For each meeting, include display these three fields. for the date stamp, just include the date not the time.
+For each meeting, include display these three fields. for the date stamp, just include the date not the time. also summarize the meeting in one paragraph. and write one paragraph about next steps or actions that were discussed.
 
 # Open Questions, Concerns
 
