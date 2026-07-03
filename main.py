@@ -7,6 +7,7 @@ import string
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -125,9 +126,30 @@ def extract_docx_text(path: Path) -> str | None:
     return text or None
 
 
+def extract_pdf_text(path: Path) -> str | None:
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+
+    try:
+        reader = PdfReader(path)
+        parts = [
+            text
+            for page in reader.pages
+            if (text := page.extract_text()) and text.strip()
+        ]
+    except (OSError, PdfReadError):
+        return None
+
+    text = "\n\n".join(parts).strip()
+    return text or None
+
+
 def read_file_as_text(path: Path) -> str | None:
-    if path.suffix.lower() == ".docx":
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
         return extract_docx_text(path)
+    if suffix == ".pdf":
+        return extract_pdf_text(path)
 
     data = path.read_bytes()
     if is_likely_binary(data):
@@ -142,8 +164,8 @@ def read_file_as_text(path: Path) -> str | None:
     return data.decode("utf-8", errors="replace")
 
 
-def collect_documents(folder: Path) -> list[tuple[str, str]]:
-    documents: list[tuple[str, str]] = []
+def collect_documents(folder: Path) -> list[tuple[Path, str]]:
+    documents: list[tuple[Path, str]] = []
 
     for entry in sorted(folder.iterdir()):
         if (
@@ -157,13 +179,13 @@ def collect_documents(folder: Path) -> list[tuple[str, str]]:
         if text is None:
             continue
 
-        documents.append((entry.name, text))
+        documents.append((entry, text))
 
     return documents
 
 
-def build_payload(documents: list[tuple[str, str]]) -> str:
-    sections = [f"### {name}\n{content}" for name, content in documents]
+def build_payload(documents: list[tuple[Path, str]]) -> str:
+    sections = [f"### {path.name}\n{content}" for path, content in documents]
     payload = "\n\n".join(sections)
 
     if len(payload) > MAX_CONTENT_CHARS:
@@ -226,7 +248,7 @@ def load_template() -> list[dict[str, str]]:
 
 def generate_section_content(
     section: dict[str, str],
-    documents: list[tuple[str, str]],
+    documents: list[tuple[Path, str]],
     api_key: str,
     model: str,
 ) -> str:
@@ -251,6 +273,26 @@ def load_styles() -> str:
     return STYLES_PATH.read_text(encoding="utf-8")
 
 
+def path_to_file_url(path: Path) -> str:
+    return "file://" + quote(path.resolve().as_posix())
+
+
+def build_references_section(documents: list[tuple[Path, str]]) -> str:
+    items = "\n".join(
+        f'      <li><a href="{html.escape(path_to_file_url(path))}" target="_blank">'
+        f"{html.escape(path.name)}</a></li>"
+        for path, _ in documents
+    )
+    return f"""    <section>
+      <h1>References</h1>
+      <div>
+        <ul>
+{items}
+        </ul>
+      </div>
+    </section>"""
+
+
 def extract_company_name(sections_content: list[tuple[str, str]]) -> str | None:
     for title, content in sections_content:
         if title.lower() != "company":
@@ -266,7 +308,9 @@ def extract_company_name(sections_content: list[tuple[str, str]]) -> str | None:
 
 
 def write_deal_html(
-    folder: Path, sections_content: list[tuple[str, str]]
+    folder: Path,
+    sections_content: list[tuple[str, str]],
+    documents: list[tuple[Path, str]],
 ) -> Path:
     analysis_dir = folder / "analysis"
     if not analysis_dir.exists():
@@ -281,6 +325,7 @@ def write_deal_html(
         f"    <section>\n      <h1>{title}</h1>\n      <div>{content}</div>\n    </section>"
         for title, content in sections_content
     )
+    references_html = build_references_section(documents)
 
     company_name = extract_company_name(sections_content)
     page_title = html.escape(company_name if company_name else "Deal")
@@ -305,6 +350,7 @@ def write_deal_html(
       </p>
     </section>
 {section_html}
+{references_html}
   </main>
   <script>
     (function () {{
@@ -427,7 +473,7 @@ def main() -> int:
         sections_content.append((section["title"], content))
 
     try:
-        output_path = write_deal_html(folder, sections_content)
+        output_path = write_deal_html(folder, sections_content, documents)
     except (FileNotFoundError, OSError) as exc:
         print(f"Error: failed to write deal.html: {exc}", file=sys.stderr)
         return 1

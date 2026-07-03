@@ -6,7 +6,9 @@ Output a two-column HTML table with exactly these rows (one row per field). Do n
 |---|---|
 | Name | company name. if we know the compnay website, make this a link to its website|
 | Founding date | figure out roughly when the company was founded based on information in the documents. if absolute dates are unknown, a relative founding date is fine.  e.g. "founded last year". If there is no way to know, just say "unknown" |
-| Funding to date | total raised if stated; if they founds have actually stated that no money has been raise, than say $0. otherwise `not available` |
+| Funding to date | total raised if stated; if they founds have actually stated that no money has been raise, than say $0. otherwise `not available` also mention the source(s) of fudning if known. if there are multiple sources indicate how much came from each source (if known)|
+|Raising| how much are they raising (if known)|
+|Valuation| state the valuation if known.|
 | Founders | founder names as HTML links to LinkedIn when a URL is present in the documents; plain text otherwise. Separate multiple founders with commas. |
 
 Use `<table>`, `<tr>`, and `<td>` only. First column = field label. Second column = value.
@@ -47,6 +49,10 @@ Report what the founders claim and what the documents support. Do **not** make y
 each document that is a transcripts includes a section at the top that includes date, meeting attendees and a URL for the meeting.
 
 For each meeting, include display these three fields. for the date stamp, just include the date not the time. also summarize the meeting in one paragraph. and write one paragraph about next steps or actions that were discussed.
+
+# TAM
+
+If available, show the TAM analysis that has been done. Otherwise say "no TAM analaysis found"
 
 # Open Questions, Concerns
 
