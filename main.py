@@ -13,14 +13,13 @@ from groq import Groq
 import markdown as markdown_lib
 
 from document_utils import collect_documents
+from template_utils import load_markdown_template
 
 GOOGLE_DRIVE_BASE = Path(
     "/Users/tammerkamel/Library/CloudStorage/GoogleDrive-tammer.kamel@antler.co/My Drive"
 )
 TEMPLATE_PATH = Path(__file__).parent / "template.md"
 STYLES_PATH = Path(__file__).parent / "styles.css"
-
-H1_HEADING_RE = re.compile(r"^#\s+(.+)$")
 
 MAX_CONTENT_CHARS = 100_000
 
@@ -111,52 +110,8 @@ def build_payload(documents: list[tuple[Path, str]]) -> str:
     return payload
 
 
-def parse_template_markdown(text: str) -> list[dict[str, str]]:
-    sections: list[dict[str, str]] = []
-    current_title: str | None = None
-    current_lines: list[str] = []
-
-    def flush_section() -> None:
-        nonlocal current_title, current_lines
-        if current_title is None:
-            return
-
-        instruction = "\n".join(current_lines).strip()
-        if not instruction:
-            raise ValueError(
-                f"section '{current_title}' in template.md must have instruction text"
-            )
-
-        sections.append({"title": current_title, "instruction": instruction})
-        current_title = None
-        current_lines = []
-
-    for line in text.splitlines():
-        heading_match = H1_HEADING_RE.match(line)
-        if heading_match:
-            flush_section()
-            current_title = heading_match.group(1).strip()
-            continue
-
-        if current_title is not None:
-            current_lines.append(line)
-
-    flush_section()
-
-    if not sections:
-        raise ValueError(
-            "template.md must define at least one section using '# Title' headings"
-        )
-
-    return sections
-
-
 def load_template() -> list[dict[str, str]]:
-    if not TEMPLATE_PATH.exists():
-        raise FileNotFoundError(f"template file not found: {TEMPLATE_PATH}")
-
-    text = TEMPLATE_PATH.read_text(encoding="utf-8")
-    return parse_template_markdown(text)
+    return load_markdown_template(TEMPLATE_PATH, source_name="template.md")
 
 
 def generate_section_content(
