@@ -3,7 +3,6 @@ import argparse
 import html
 import os
 import re
-import string
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +11,8 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from groq import Groq
 import markdown as markdown_lib
+
+from document_utils import collect_documents
 
 GOOGLE_DRIVE_BASE = Path(
     "/Users/tammerkamel/Library/CloudStorage/GoogleDrive-tammer.kamel@antler.co/My Drive"
@@ -22,8 +23,6 @@ STYLES_PATH = Path(__file__).parent / "styles.css"
 H1_HEADING_RE = re.compile(r"^#\s+(.+)$")
 
 MAX_CONTENT_CHARS = 100_000
-BINARY_SAMPLE_SIZE = 8192
-PRINTABLE_THRESHOLD = 0.75
 
 SECTION_SYSTEM_PROMPT = (
     "You are analyzing startup deal documents. Follow the user's instruction "
@@ -96,92 +95,6 @@ def ensure_html(content: str) -> str:
         extensions=["tables", "sane_lists", "nl2br"],
     )
     return demote_h1_to_h3(add_target_blank_to_links(html))
-
-
-def is_likely_binary(data: bytes) -> bool:
-    if b"\x00" in data[:BINARY_SAMPLE_SIZE]:
-        return True
-    if not data:
-        return False
-    sample = data[:BINARY_SAMPLE_SIZE]
-    printable = sum(
-        1 for b in sample if chr(b) in string.printable or b in (9, 10, 13)
-    )
-    return printable / len(sample) < PRINTABLE_THRESHOLD
-
-
-def extract_docx_text(path: Path) -> str | None:
-    import zipfile
-
-    try:
-        with zipfile.ZipFile(path) as archive:
-            xml = archive.read("word/document.xml").decode("utf-8")
-    except (OSError, KeyError, UnicodeDecodeError):
-        return None
-
-    text = re.sub(r"<w:tab[^>]*/>", "\t", xml)
-    text = re.sub(r"</w:p>", "\n", text)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"\n{2,}", "\n\n", text).strip()
-    return text or None
-
-
-def extract_pdf_text(path: Path) -> str | None:
-    from pypdf import PdfReader
-    from pypdf.errors import PdfReadError
-
-    try:
-        reader = PdfReader(path)
-        parts = [
-            text
-            for page in reader.pages
-            if (text := page.extract_text()) and text.strip()
-        ]
-    except (OSError, PdfReadError):
-        return None
-
-    text = "\n\n".join(parts).strip()
-    return text or None
-
-
-def read_file_as_text(path: Path) -> str | None:
-    suffix = path.suffix.lower()
-    if suffix == ".docx":
-        return extract_docx_text(path)
-    if suffix == ".pdf":
-        return extract_pdf_text(path)
-
-    data = path.read_bytes()
-    if is_likely_binary(data):
-        return None
-
-    for encoding in ("utf-8", "latin-1"):
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-
-    return data.decode("utf-8", errors="replace")
-
-
-def collect_documents(folder: Path) -> list[tuple[Path, str]]:
-    documents: list[tuple[Path, str]] = []
-
-    for entry in sorted(folder.iterdir()):
-        if (
-            not entry.is_file()
-            or entry.name.startswith(".")
-            or entry.name.startswith("~$")
-        ):
-            continue
-
-        text = read_file_as_text(entry)
-        if text is None:
-            continue
-
-        documents.append((entry, text))
-
-    return documents
 
 
 def build_payload(documents: list[tuple[Path, str]]) -> str:
@@ -452,7 +365,7 @@ def main() -> int:
 
     model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-    documents = collect_documents(folder)
+    documents = collect_documents(folder, recursive=False)
     if not documents:
         print(
             f"Error: no readable top-level files found in {folder}",
