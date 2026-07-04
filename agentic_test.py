@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 import argparse
+import getpass
 import json
 import os
 import re
 import sys
 from dataclasses import dataclass
-from html import unescape
 from html.parser import HTMLParser
 from textwrap import shorten
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 if TYPE_CHECKING:
     from groq import Groq
 
-DUCKDUCKGO_SEARCH_URL = "https://html.duckduckgo.com/html/?q="
+BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_MAX_ITERATIONS = 5
 RESULTS_PER_SEARCH = 5
@@ -32,7 +32,7 @@ USER_AGENT = (
 PLANNER_SYSTEM_PROMPT = """You are running a web research loop.
 
 Your job is to decide either:
-1. one next DuckDuckGo search query, or
+1. one next web search query, or
 2. that there is enough evidence to answer the user's question now.
 
 Rules:
@@ -65,6 +65,7 @@ Return this exact shape:
 class SearchResult:
     title: str
     url: str
+    snippet: str = ""
 
 
 @dataclass
@@ -74,48 +75,6 @@ class EvidenceSource:
     title: str
     url: str
     excerpt: str
-
-
-class DuckDuckGoResultsParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.results: list[SearchResult] = []
-        self._capture_link = False
-        self._link_text: list[str] = []
-        self._link_href = ""
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attrs_dict = {key: value or "" for key, value in attrs}
-        classes = set(attrs_dict.get("class", "").split())
-        href = attrs_dict.get("href", "")
-
-        if tag == "a" and (
-            "result__a" in classes
-            or "uddg=" in href
-            or href.startswith("http://")
-            or href.startswith("https://")
-        ):
-            self._capture_link = True
-            self._link_text = []
-            self._link_href = href
-
-    def handle_data(self, data: str) -> None:
-        if self._capture_link:
-            self._link_text.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag != "a" or not self._capture_link:
-            return
-
-        title = normalize_whitespace(unescape("".join(self._link_text)))
-        url = normalize_result_url(self._link_href)
-
-        if title and url and is_public_web_url(url):
-            self.results.append(SearchResult(title=title, url=url))
-
-        self._capture_link = False
-        self._link_text = []
-        self._link_href = ""
 
 
 class VisibleTextParser(HTMLParser):
@@ -146,29 +105,13 @@ def normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def normalize_result_url(raw_url: str) -> str:
-    if not raw_url:
-        return ""
-
-    if raw_url.startswith("//"):
-        raw_url = "https:" + raw_url
-
-    parsed = urlparse(raw_url)
-
-    if "duckduckgo.com" in parsed.netloc and parsed.path.startswith("/l/"):
-        encoded = parse_qs(parsed.query).get("uddg", [""])[0]
-        return unquote(encoded)
-
-    return raw_url
-
-
 def is_public_web_url(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         return False
     if not parsed.netloc:
         return False
-    return "duckduckgo.com" not in parsed.netloc
+    return "search.brave.com" not in parsed.netloc
 
 
 def fetch_url(url: str) -> tuple[str, str]:
@@ -186,24 +129,77 @@ def fetch_url(url: str) -> tuple[str, str]:
     return body.decode(charset, errors="replace"), content_type
 
 
-def search_duckduckgo(query: str, max_results: int = RESULTS_PER_SEARCH) -> list[SearchResult]:
-    html_content, content_type = fetch_url(DUCKDUCKGO_SEARCH_URL + query.replace(" ", "+"))
-    if "html" not in content_type:
-        raise RuntimeError(f"unexpected DuckDuckGo content type: {content_type}")
+def fetch_json(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    request_headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    if headers:
+        request_headers.update(headers)
 
-    parser = DuckDuckGoResultsParser()
-    parser.feed(html_content)
+    request = Request(url, headers=request_headers)
+    with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        body = response.read().decode(charset, errors="replace")
+    return json.loads(body)
 
+
+def brave_search_api_key() -> str:
+    api_key = os.getenv("BRAVE_SEARCH_API_KEY") or os.getenv("BRAVE_API_KEY")
+    if api_key:
+        return api_key
+
+    if sys.stdin.isatty():
+        api_key = getpass.getpass("Brave Search API key: ").strip()
+        if api_key:
+            return api_key
+
+    raise RuntimeError("BRAVE_SEARCH_API_KEY is not set")
+
+
+def search_brave(query: str, max_results: int = RESULTS_PER_SEARCH) -> list[SearchResult]:
+    params = urlencode(
+        {
+            "q": query,
+            "count": max_results,
+            "extra_snippets": "true",
+            "safesearch": "moderate",
+        }
+    )
+    payload = fetch_json(
+        f"{BRAVE_SEARCH_URL}?{params}",
+        headers={"X-Subscription-Token": brave_search_api_key()},
+    )
+
+    raw_results = payload.get("web", {}).get("results", [])
     deduped: list[SearchResult] = []
     seen_urls: set[str] = set()
-    for result in parser.results:
-        canonical = result.url.split("#", 1)[0]
+    for result in raw_results:
+        title = normalize_whitespace(str(result.get("title", "")))
+        url = str(result.get("url", "")).split("#", 1)[0]
+        snippets = []
+        description = normalize_whitespace(str(result.get("description", "")))
+        if description:
+            snippets.append(description)
+        for extra in result.get("extra_snippets", []) or []:
+            extra_text = normalize_whitespace(str(extra))
+            if extra_text:
+                snippets.append(extra_text)
+
+        canonical = url
         if canonical in seen_urls:
             continue
+        if not title or not canonical or not is_public_web_url(canonical):
+            continue
         seen_urls.add(canonical)
-        deduped.append(SearchResult(title=result.title, url=canonical))
-        if len(deduped) >= max_results:
-            break
+        deduped.append(
+            SearchResult(
+                title=title,
+                url=canonical,
+                snippet=" ".join(snippets),
+            )
+        )
 
     return deduped
 
@@ -228,6 +224,15 @@ def read_result_page(result: SearchResult) -> str:
 
     text = extract_visible_text(content)
     return text or "[Page returned little or no readable text]"
+
+
+def combine_result_evidence(result: SearchResult, page_excerpt: str) -> str:
+    parts: list[str] = []
+    if result.snippet:
+        parts.append(f"Search snippets: {result.snippet}")
+    if page_excerpt:
+        parts.append(f"Page text: {page_excerpt}")
+    return "\n".join(parts).strip()
 
 
 def groq_client() -> "Groq":
@@ -407,11 +412,11 @@ def run_agentic_search(question: str, model: str, max_iterations: int) -> int:
             print("Planner requested a search but did not provide a query.", file=sys.stderr)
             return 1
 
-        print(f"Searching DuckDuckGo for: {query}")
+        print(f"Searching Brave for: {query}")
         search_history.append(query)
 
         try:
-            results = search_duckduckgo(query)
+            results = search_brave(query)
         except Exception as exc:
             print(f"Search error: {exc}", file=sys.stderr)
             return 1
@@ -428,7 +433,7 @@ def run_agentic_search(question: str, model: str, max_iterations: int) -> int:
                 continue
 
             print(f"Reading: {shorten(result.title, width=90, placeholder='...')}")
-            excerpt = read_result_page(result)
+            excerpt = combine_result_evidence(result, read_result_page(result))
             evidence.append(
                 EvidenceSource(
                     source_id=f"S{source_counter}",
@@ -457,7 +462,7 @@ def run_agentic_search(question: str, model: str, max_iterations: int) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Ask a question and let an agentic loop search DuckDuckGo until it can answer."
+        description="Ask a question and let an agentic loop search the web with Brave until it can answer."
     )
     parser.add_argument(
         "--question",
