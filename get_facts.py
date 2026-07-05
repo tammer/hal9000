@@ -13,8 +13,24 @@ from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 
+# Pick a model by index: SEARCH_PLANNER_MODEL = MODELS[0], etc.
+MODELS = [
+    "claude-opus-4-8",       # 0
+    "claude-opus-4-7",       # 1
+    "claude-opus-4-6",       # 2
+    "claude-opus-4-5",       # 3
+    "claude-sonnet-5",       # 4
+    "claude-sonnet-4-6",     # 5
+    "claude-sonnet-4-5",     # 6
+    "claude-haiku-4-5",      # 7
+    "claude-fable-5",        # 8
+    "llama-3.3-70b-versatile",  # 9
+]
+
+SEARCH_PLANNER_MODEL = MODELS[6]
+FACT_EXTRACTOR_MODEL = MODELS[6]
+
 BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_MAX_SEARCHES = 4
 MIN_FACTS_BEFORE_RETRY = 2
 RESULTS_PER_SEARCH = 8
@@ -231,6 +247,10 @@ def combine_result_evidence(result: SearchResult, page_excerpt: str) -> str:
     return "\n".join(parts).strip()
 
 
+def is_anthropic_model(model: str) -> bool:
+    return model.startswith("claude-")
+
+
 def groq_client():
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -238,6 +258,15 @@ def groq_client():
     from groq import Groq
 
     return Groq(api_key=api_key)
+
+
+def anthropic_client():
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+    from anthropic import Anthropic
+
+    return Anthropic(api_key=api_key)
 
 
 def strip_code_fences(text: str) -> str:
@@ -341,16 +370,28 @@ def parse_json_response(content: str) -> dict[str, Any]:
 
 
 def llm_json(system_prompt: str, user_prompt: str, model: str) -> dict[str, Any]:
-    client = groq_client()
-    response = client.chat.completions.create(
-        model=model,
-        temperature=0.2,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-    content = response.choices[0].message.content or ""
+    if is_anthropic_model(model):
+        client = anthropic_client()
+        response = client.messages.create(
+            model=model,
+            max_tokens=4096,
+            temperature=0.2,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        content = response.content[0].text
+    else:
+        client = groq_client()
+        response = client.chat.completions.create(
+            model=model,
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        content = response.choices[0].message.content or ""
+
     return parse_json_response(content)
 
 
@@ -514,7 +555,8 @@ def validate_facts(
 
 def get_facts(
     prompt: str,
-    model: str,
+    planner_model: str,
+    extractor_model: str,
     max_searches: int,
     *,
     verbose: bool,
@@ -522,14 +564,15 @@ def get_facts(
     evidence: list[EvidenceItem] = []
     seen_urls: set[str] = set()
 
-    log("Planning searches...", verbose=verbose)
-    queries = plan_searches(prompt, model, max_searches)
+    log(f"Planning searches (model: {planner_model})...", verbose=verbose)
+    queries = plan_searches(prompt, planner_model, max_searches)
     if not queries:
         raise RuntimeError("Search planner returned no queries")
 
     gather_evidence_for_queries(queries, evidence, seen_urls, verbose=verbose)
 
-    facts, needs_more, follow_up = extract_facts(prompt, evidence, model)
+    log(f"Extracting facts (model: {extractor_model})...", verbose=verbose)
+    facts, needs_more, follow_up = extract_facts(prompt, evidence, extractor_model)
     validated = validate_facts(facts, evidence_url_set(evidence))
 
     should_retry = len(validated) < MIN_FACTS_BEFORE_RETRY or (
@@ -538,7 +581,7 @@ def get_facts(
     if should_retry and follow_up:
         log("Running follow-up searches...", verbose=verbose)
         gather_evidence_for_queries(follow_up, evidence, seen_urls, verbose=verbose)
-        facts, _, _ = extract_facts(prompt, evidence, model)
+        facts, _, _ = extract_facts(prompt, evidence, extractor_model)
         validated = validate_facts(facts, evidence_url_set(evidence))
     elif should_retry and not follow_up:
         log("Too few facts found; no follow-up queries suggested.", verbose=verbose)
@@ -560,11 +603,6 @@ def parse_args() -> argparse.Namespace:
         "--prompt",
         dest="prompt_flag",
         help="Prompt requesting quantitative factual information",
-    )
-    parser.add_argument(
-        "--model",
-        default=os.getenv("GROQ_MODEL", DEFAULT_MODEL),
-        help=f"Groq model to use (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
         "--max-searches",
@@ -596,7 +634,8 @@ def main() -> int:
     try:
         facts = get_facts(
             prompt.strip(),
-            args.model,
+            SEARCH_PLANNER_MODEL,
+            FACT_EXTRACTOR_MODEL,
             max_searches,
             verbose=verbose,
         )
