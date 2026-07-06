@@ -15,9 +15,9 @@ import markdown as markdown_lib
 from document_utils import collect_documents
 from template_utils import load_markdown_template
 
-GOOGLE_DRIVE_BASE = Path(
-    "/Users/tammerkamel/Library/CloudStorage/GoogleDrive-tammer.kamel@antler.co/My Drive"
-)
+# GOOGLE_DRIVE_BASE="/Users/tammer/Library/CloudStorage/GoogleDrive-tammer.kamel@antler.co/My Drive/deals"
+load_dotenv()
+
 TEMPLATE_PATH = Path(__file__).parent / "template.md"
 STYLES_PATH = Path(__file__).parent / "styles.css"
 
@@ -268,8 +268,11 @@ def write_deal_html(
 
 
 def resolve_folder_path(relative_path: str) -> Path:
-    folder = (GOOGLE_DRIVE_BASE / relative_path.lstrip("/")).resolve()
-    base = GOOGLE_DRIVE_BASE.resolve()
+    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
+    if not base_raw:
+        raise ValueError("GOOGLE_DRIVE_BASE is not set")
+    base = Path(base_raw).resolve()
+    folder = (base / relative_path.lstrip("/")).resolve()
 
     if base not in folder.parents and folder != base:
         raise ValueError(f"path escapes Google Drive root: {relative_path}")
@@ -289,8 +292,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    load_dotenv()
-
     args = parse_args()
 
     try:
