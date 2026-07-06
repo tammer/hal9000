@@ -27,8 +27,8 @@ MODELS = [
     "llama-3.3-70b-versatile",  # 9
 ]
 
-SEARCH_PLANNER_MODEL = MODELS[6]
-FACT_EXTRACTOR_MODEL = MODELS[6]
+SEARCH_PLANNER_MODEL = MODELS[9]
+FACT_EXTRACTOR_MODEL = MODELS[9]
 
 BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 DEFAULT_MAX_SEARCHES = 4
