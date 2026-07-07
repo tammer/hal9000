@@ -13,33 +13,26 @@ from groq import Groq
 import markdown as markdown_lib
 
 from document_utils import collect_documents
-from template_utils import load_markdown_template
+from template_utils import load_template_directory
 
 # GOOGLE_DRIVE_BASE="/Users/tammer/Library/CloudStorage/GoogleDrive-tammer.kamel@antler.co/My Drive/deals"
 load_dotenv()
 
-TEMPLATE_PATH = Path(__file__).parent / "template.md"
+TEMPLATE_DIR = Path(__file__).parent / "templates"
 STYLES_PATH = Path(__file__).parent / "styles.css"
 
 MAX_CONTENT_CHARS = 100_000
 
 SECTION_SYSTEM_PROMPT = (
     "You are analyzing startup deal documents. Follow the user's instruction "
-    "for this section. Return only HTML suitable for embedding inside a <div> "
-    "(use <p>, <ul>, <a href=\"...\">, etc.). Do not include <html>, <body>, "
-    "or heading tags."
+    "for this section. Return only markdown (paragraphs, pipe tables, ordered/unordered "
+    "lists, links). Do not include HTML tags, code fences, or document headings."
     "You should be concise."
     "If you can't provide the information, just say 'not available'."
-    "any html link you create should open in a new tab."
     "never provide more information that you are asked for."
-    "do not state opinions of assessments. just facts."
+    "do not state opinions or assessments. just facts."
 )
 
-
-HTML_BLOCK_TAG_RE = re.compile(
-    r"<\s*(p|table|ul|ol|li|tr|td|th|thead|tbody|a|div|strong|em)\b",
-    re.IGNORECASE,
-)
 ANCHOR_TAG_RE = re.compile(r"<a\s+([^>]+)>", re.IGNORECASE)
 ORDERED_LIST_ITEM_RE = re.compile(r"^\s*\d+\.\s")
 UNORDERED_LIST_ITEM_RE = re.compile(r"^\s*[-*]\s")
@@ -47,6 +40,17 @@ COMPANY_NAME_ROW_RE = re.compile(
     r"<tr>\s*<td>\s*Name\s*</td>\s*<td>(.*?)</td>\s*</tr>",
     re.IGNORECASE | re.DOTALL,
 )
+MARKDOWN_FENCE_RE = re.compile(
+    r"^```(?:markdown)?\s*\n(.*?)\n```\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def strip_markdown_fences(text: str) -> str:
+    match = MARKDOWN_FENCE_RE.match(text.strip())
+    if match:
+        return match.group(1).strip()
+    return text.strip()
 
 
 def add_target_blank_to_links(html: str) -> str:
@@ -81,19 +85,16 @@ def normalize_markdown_lists(text: str) -> str:
     return "\n".join(normalized)
 
 
-def ensure_html(content: str) -> str:
-    text = content.strip()
+def markdown_to_html(content: str) -> str:
+    text = strip_markdown_fences(content)
     if not text:
         return text
 
-    if HTML_BLOCK_TAG_RE.search(text):
-        return demote_h1_to_h3(add_target_blank_to_links(text))
-
-    html = markdown_lib.markdown(
+    html_output = markdown_lib.markdown(
         normalize_markdown_lists(text),
         extensions=["tables", "sane_lists", "nl2br"],
     )
-    return demote_h1_to_h3(add_target_blank_to_links(html))
+    return demote_h1_to_h3(add_target_blank_to_links(html_output))
 
 
 def build_payload(documents: list[tuple[Path, str]]) -> str:
@@ -111,10 +112,20 @@ def build_payload(documents: list[tuple[Path, str]]) -> str:
 
 
 def load_template() -> list[dict[str, str]]:
-    return load_markdown_template(TEMPLATE_PATH, source_name="template.md")
+    return load_template_directory(TEMPLATE_DIR)
 
 
-def generate_section_content(
+def find_section_by_slug(
+    sections: list[dict[str, str]], slug: str
+) -> dict[str, str] | None:
+    slug_lower = slug.lower()
+    for section in sections:
+        if section["slug"].lower() == slug_lower:
+            return section
+    return None
+
+
+def generate_section_markdown(
     section: dict[str, str],
     documents: list[tuple[Path, str]],
     api_key: str,
@@ -132,7 +143,18 @@ def generate_section_content(
         ],
     )
 
-    return ensure_html(response.choices[0].message.content or "")
+    return strip_markdown_fences(response.choices[0].message.content or "")
+
+
+def generate_section_content(
+    section: dict[str, str],
+    documents: list[tuple[Path, str]],
+    api_key: str,
+    model: str,
+) -> str:
+    return markdown_to_html(
+        generate_section_markdown(section, documents, api_key, model)
+    )
 
 
 def load_styles() -> str:
@@ -143,6 +165,81 @@ def load_styles() -> str:
 
 def path_to_file_url(path: Path) -> str:
     return "file://" + quote(path.resolve().as_posix())
+
+
+def build_last_updated_script() -> str:
+    return """  <script>
+    (function () {
+      const el = document.getElementById("last-updated-time");
+      const relativeEl = document.getElementById("last-updated-relative");
+      if (!el || !relativeEl) return;
+
+      const updatedAt = new Date(el.getAttribute("datetime"));
+      const now = new Date();
+      const diffMs = now - updatedAt;
+      const diffDays = Math.floor(
+        (Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) -
+          Date.UTC(updatedAt.getFullYear(), updatedAt.getMonth(), updatedAt.getDate())) /
+          86400000
+      );
+
+      let label;
+      if (diffMs < 60000) {
+        label = "just now";
+      } else if (diffDays === 0) {
+        label = "today";
+      } else if (diffDays === 1) {
+        label = "yesterday";
+      } else if (diffDays < 7) {
+        label = diffDays + " days ago";
+      } else if (diffDays < 30) {
+        const weeks = Math.floor(diffDays / 7);
+        label = weeks === 1 ? "1 week ago" : weeks + " weeks ago";
+      } else if (diffDays < 365) {
+        const months = Math.floor(diffDays / 30);
+        label = months === 1 ? "1 month ago" : months + " months ago";
+      } else {
+        const years = Math.floor(diffDays / 365);
+        label = years === 1 ? "1 year ago" : years + " years ago";
+      }
+
+      relativeEl.textContent = label;
+    })();
+  </script>"""
+
+
+def build_html_page(title: str, body_html: str) -> str:
+    updated_at = datetime.now().astimezone()
+    updated_iso = updated_at.isoformat(timespec="seconds")
+    updated_display = updated_at.strftime("%B %-d, %Y at %-I:%M %p %Z")
+    styles = load_styles()
+    page_title = html.escape(title)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{page_title}</title>
+  <style>
+{styles}
+  </style>
+</head>
+<body>
+  <main>
+    <section id="last-updated">
+      <h1>Last Updated</h1>
+      <p>
+        <time id="last-updated-time" datetime="{updated_iso}">{updated_display}</time>
+        (<span id="last-updated-relative"></span>)
+      </p>
+    </section>
+{body_html}
+  </main>
+{build_last_updated_script()}
+</body>
+</html>
+"""
 
 
 def build_references_section(documents: list[tuple[Path, str]]) -> str:
@@ -181,86 +278,17 @@ def write_deal_html(
     documents: list[tuple[Path, str]],
 ) -> Path:
     analysis_dir = folder / "analysis"
-    if not analysis_dir.exists():
-        analysis_dir.mkdir()
-
-    updated_at = datetime.now().astimezone()
-    updated_iso = updated_at.isoformat(timespec="seconds")
-    updated_display = updated_at.strftime("%B %-d, %Y at %-I:%M %p %Z")
-    styles = load_styles()
+    analysis_dir.mkdir(parents=True, exist_ok=True)
 
     section_html = "\n".join(
-        f"    <section>\n      <h1>{title}</h1>\n      <div>{content}</div>\n    </section>"
+        f"    <section>\n      <h1>{html.escape(title)}</h1>\n      <div>{content}</div>\n    </section>"
         for title, content in sections_content
     )
     references_html = build_references_section(documents)
 
     company_name = extract_company_name(sections_content)
-    page_title = html.escape(company_name if company_name else "Deal")
-
-    document_html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{page_title}</title>
-  <style>
-{styles}
-  </style>
-</head>
-<body>
-  <main>
-    <section id="last-updated">
-      <h1>Last Updated</h1>
-      <p>
-        <time id="last-updated-time" datetime="{updated_iso}">{updated_display}</time>
-        (<span id="last-updated-relative"></span>)
-      </p>
-    </section>
-{section_html}
-{references_html}
-  </main>
-  <script>
-    (function () {{
-      const el = document.getElementById("last-updated-time");
-      const relativeEl = document.getElementById("last-updated-relative");
-      if (!el || !relativeEl) return;
-
-      const updatedAt = new Date(el.getAttribute("datetime"));
-      const now = new Date();
-      const diffMs = now - updatedAt;
-      const diffDays = Math.floor(
-        (Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) -
-          Date.UTC(updatedAt.getFullYear(), updatedAt.getMonth(), updatedAt.getDate())) /
-          86400000
-      );
-
-      let label;
-      if (diffMs < 60000) {{
-        label = "just now";
-      }} else if (diffDays === 0) {{
-        label = "today";
-      }} else if (diffDays === 1) {{
-        label = "yesterday";
-      }} else if (diffDays < 7) {{
-        label = diffDays + " days ago";
-      }} else if (diffDays < 30) {{
-        const weeks = Math.floor(diffDays / 7);
-        label = weeks === 1 ? "1 week ago" : weeks + " weeks ago";
-      }} else if (diffDays < 365) {{
-        const months = Math.floor(diffDays / 30);
-        label = months === 1 ? "1 month ago" : months + " months ago";
-      }} else {{
-        const years = Math.floor(diffDays / 365);
-        label = years === 1 ? "1 year ago" : years + " years ago";
-      }}
-
-      relativeEl.textContent = label;
-    }})();
-  </script>
-</body>
-</html>
-"""
+    page_title = company_name if company_name else "Deal"
+    document_html = build_html_page(page_title, f"{section_html}\n{references_html}")
 
     output_path = analysis_dir / "deal.html"
     output_path.write_text(document_html, encoding="utf-8")
@@ -280,19 +308,49 @@ def resolve_folder_path(relative_path: str) -> Path:
     return folder
 
 
+def print_section_list(sections: list[dict[str, str]]) -> None:
+    for section in sections:
+        print(f"{section['slug']}\t{section['title']}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate deal analysis HTML from folder documents using an LLM."
     )
     parser.add_argument(
         "relative_path",
+        nargs="?",
         help="Relative path under Google Drive to the folder to analyze",
+    )
+    parser.add_argument(
+        "--section",
+        metavar="SLUG",
+        help="Generate one section and print markdown to stdout (e.g. company, traction)",
+    )
+    parser.add_argument(
+        "--list-sections",
+        action="store_true",
+        help="List available section slugs and titles, then exit",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+
+    try:
+        template_sections = load_template()
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.list_sections:
+        print_section_list(template_sections)
+        return 0
+
+    if not args.relative_path:
+        print("Error: relative_path is required unless using --list-sections", file=sys.stderr)
+        return 1
 
     try:
         folder = resolve_folder_path(args.relative_path)
@@ -306,12 +364,6 @@ def main() -> int:
 
     if not folder.is_dir():
         print(f"Error: path is not a directory: {folder}", file=sys.stderr)
-        return 1
-
-    try:
-        template_sections = load_template()
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     api_key = os.getenv("GROQ_API_KEY")
@@ -328,6 +380,28 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    if args.section:
+        section = find_section_by_slug(template_sections, args.section)
+        if section is None:
+            available = ", ".join(s["slug"] for s in template_sections)
+            print(
+                f"Error: unknown section '{args.section}'. Available: {available}",
+                file=sys.stderr,
+            )
+            return 1
+
+        try:
+            content = generate_section_markdown(section, documents, api_key, model)
+        except Exception as exc:
+            print(
+                f"Error: Groq API call failed for section '{section['title']}': {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+        print(content)
+        return 0
 
     sections_content: list[tuple[str, str]] = []
     for section in template_sections:
