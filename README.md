@@ -73,3 +73,17 @@ The LLM returns markdown; `main.py` converts it to HTML when building the full r
 ## Input documents
 
 `main.py` reads **top-level files only** in the deal folder (not subfolders). It supports plain text, PDF, and DOCX files.
+
+### Contents index
+
+Classify top-level files and write `contents.json` in the deal folder (filename, creation date, and document type). Re-runs skip files already listed in `contents.json` and only classify new files:
+
+```bash
+python generate_contents.py "Acme Corp"
+```
+
+Output path example:
+
+```
+/path/to/deals/Acme Corp/contents.json
+```
