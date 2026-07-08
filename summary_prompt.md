@@ -6,6 +6,11 @@ Our team: Tammer Kamel (TK), Shambhavi Mishra (SM), Alex Wright (AW), Daphne McL
 
 Produce a concise investment report.  Leave unknown fields blank rather than guessing.
 
+# State
+
+Based on all known information, what's the state of things with this deal. Are there known next steps? Who is meant to take action next? Do your best to figure this out, but make sure you are clear if you are making assumptions or inferences.
+Be very concise in this section. 25 - 40 words max.
+
 # Company
 
 Two-column Markdown table (**Field** | **Value**), one row per field:
@@ -45,4 +50,8 @@ Under each: bullet their opinions, questions, concerns, and ideas only. No facts
 
 One `##` subheading per transcript, chronological (oldest → newest). Title with date when known (`## 2024-03-12`); otherwise a short descriptive title.
 
-Under each: **Attendees** (name + role/affiliation), **Discussion** (bullets: key topics and decisions only), **Next steps** (owner + action when clear). Omit fluff and repeated facts.
+AUnder each: **Attendees** (name + role/affiliation), **Discussion** (bullets: key topics and decisions only), **Next steps** (owner + action when clear). Omit fluff and repeated facts.
+
+# Emails
+
+Reproduce the any email threads provided in a human readable manner. include date/time stamps.
