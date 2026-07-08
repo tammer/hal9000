@@ -24,7 +24,7 @@ MEETGEEK_API_KEY=your_key_here
 
 ### Full report
 
-Generate all sections and write `analysis/deal.html` inside the deal folder:
+Generate all sections and write `ai-generated/deal.html` inside the deal folder:
 
 ```bash
 python main.py "Acme Corp"
@@ -33,7 +33,7 @@ python main.py "Acme Corp"
 Output path example:
 
 ```
-/path/to/deals/Acme Corp/analysis/deal.html
+/path/to/deals/Acme Corp/ai-generated/deal.html
 ```
 
 ### Test one section

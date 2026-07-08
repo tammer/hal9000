@@ -66,7 +66,7 @@ def list_top_level_source_files(folder: Path) -> list[Path]:
 
 
 def existing_summary_if_current(folder: Path) -> Path | None:
-    summary_path = folder / "analysis" / "summary.md"
+    summary_path = folder / "ai-generated" / "summary.md"
     if not summary_path.is_file():
         return None
 
@@ -176,9 +176,9 @@ def generate_summary(
 
 
 def write_summary(folder: Path, content: str) -> Path:
-    analysis_dir = folder / "analysis"
-    analysis_dir.mkdir(parents=True, exist_ok=True)
-    output_path = analysis_dir / "summary.md"
+    ai_generated_dir = folder / "ai-generated"
+    ai_generated_dir.mkdir(parents=True, exist_ok=True)
+    output_path = ai_generated_dir / "summary.md"
     output_path.write_text(content, encoding="utf-8")
     return output_path
 

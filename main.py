@@ -277,8 +277,8 @@ def write_deal_html(
     sections_content: list[tuple[str, str]],
     documents: list[tuple[Path, str]],
 ) -> Path:
-    analysis_dir = folder / "analysis"
-    analysis_dir.mkdir(parents=True, exist_ok=True)
+    ai_generated_dir = folder / "ai-generated"
+    ai_generated_dir.mkdir(parents=True, exist_ok=True)
 
     section_html = "\n".join(
         f"    <section>\n      <h1>{html.escape(title)}</h1>\n      <div>{content}</div>\n    </section>"
@@ -290,7 +290,7 @@ def write_deal_html(
     page_title = company_name if company_name else "Deal"
     document_html = build_html_page(page_title, f"{section_html}\n{references_html}")
 
-    output_path = analysis_dir / "deal.html"
+    output_path = ai_generated_dir / "deal.html"
     output_path.write_text(document_html, encoding="utf-8")
     return output_path
 
