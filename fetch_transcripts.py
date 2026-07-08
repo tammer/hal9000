@@ -13,7 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from groq import Groq
 
-from document_utils import collect_documents, read_file_as_text
+from document_utils import read_file_as_text
 from generate_contents import resolve_folder_path
 from meetgeek_client import (
     MeetGeekError,
@@ -36,20 +36,37 @@ MAX_DEAL_DOC_CHARS = 100_000
 TRANSCRIPT_EXCERPT_CHARS = 3_000
 MEETING_LINK_PREFIX = "https://app.meetgeek.ai/meeting/"
 
+TRANSCRIPT_FILENAME_MARKER = "_sentences_"
+
 RELEVANCE_SYSTEM_PROMPT = """You decide whether a MeetGeek meeting transcript belongs to a specific startup deal folder.
 
 Return valid JSON only with this exact shape:
 {"relevant": true, "reason": "short explanation"}
 
-Rules:
-- The transcript is relevant if external participants on the call match people associated with this deal, or if the meeting title/content clearly references the deal's company.
-- Use the deal documents to identify founders, company name, customer names, and other external people tied to this deal.
-- These Antler team members appear on ALL deals and must NOT be used to determine relevance:
+Step 1 — extract the deal's canonical identity from the deal documents only:
+- Company name
+- Founder and external contact full names
+- Known contact emails
+- Product name
+The deal folder name is often a founder's first name and may be misspelled. Use it only as a weak hint alongside explicit names in the documents.
+
+Step 2 — decide relevance using strict matching:
+A meeting is relevant ONLY if you can point to a specific entity named in the deal documents that also appears in the meeting (title, attendee names, participant emails, or transcript), such as:
+- An external participant's full name or email matches a founder/contact listed in the deal documents
+- The meeting title names the deal's company
+- The transcript discusses the deal's company, product, or founders using those exact names
+
+Hard rules:
+- These Antler team members appear on ALL deals and must NEVER determine relevance:
   Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
-- Participant email overlap with deal contacts is a strong signal.
-- Company name mentioned in the meeting title or transcript is a strong signal.
-- If evidence is weak or ambiguous, set relevant=false.
-- reason must be one concise sentence explaining the decision.
+- Do NOT match similar-sounding or partially similar names (e.g. Chen is not Chan, Hartmann is not Hong)
+- Do NOT infer company matches from email domains, substrings, or unrelated brands (e.g. atlasaos.com does not match a deal unless that exact company is named in the deal documents)
+- Do NOT mark relevant based on shared generic topics (AI, enterprise, inference, fundraising, B2B) that apply to many deals
+- Do NOT mark relevant because someone is "mentioned in the deal documents" unless you can quote the exact matching name, email, or company from those documents in your reason
+- If you cannot cite a concrete cross-match between deal documents and meeting metadata/transcript, set relevant=false
+- When evidence is ambiguous or requires guesswork, set relevant=false
+
+reason must be one concise sentence. If relevant=true, name the specific matching entity from the deal documents and where it appears in the meeting.
 """
 
 JSON_FENCE_RE = re.compile(
@@ -98,10 +115,47 @@ def filename_timestamp(timestamp_start_utc: str) -> str:
     return timestamp_start_utc.replace(":", "_")
 
 
-def transcript_basename(title: str, timestamp_start_utc: str) -> str:
+def sanitize_title_for_filename(title: str) -> str:
     safe_title = title.strip() or "Untitled Meeting"
-    encoded_title = safe_title.replace(" ", "+")
-    return f"{encoded_title}_sentences_{filename_timestamp(timestamp_start_utc)}"
+    for char in ':/\\?*|"<>':
+        safe_title = safe_title.replace(char, "_")
+    return safe_title.replace(" ", "+")
+
+
+def transcript_basename(title: str, timestamp_start_utc: str) -> str:
+    return (
+        f"{sanitize_title_for_filename(title)}"
+        f"{TRANSCRIPT_FILENAME_MARKER}{filename_timestamp(timestamp_start_utc)}"
+    )
+
+
+def is_meetgeek_transcript(path: Path) -> bool:
+    return path.suffix.lower() == ".txt" and TRANSCRIPT_FILENAME_MARKER in path.name
+
+
+def collect_deal_context(folder: Path) -> list[tuple[Path, str]]:
+    documents: list[tuple[Path, str]] = []
+
+    summary_path = folder / "ai-generated" / "summary.md"
+    if summary_path.is_file():
+        summary_text = read_file_as_text(summary_path)
+        if summary_text:
+            documents.append((summary_path, summary_text))
+
+    for entry in sorted(folder.iterdir()):
+        if not entry.is_file():
+            continue
+        if entry.name.startswith(".") or entry.name.startswith("~$"):
+            continue
+        if is_meetgeek_transcript(entry):
+            continue
+
+        text = read_file_as_text(entry)
+        if text is None:
+            continue
+        documents.append((entry, text))
+
+    return documents
 
 
 def meeting_link(meeting_id: str) -> str:
@@ -220,12 +274,15 @@ def build_relevance_prompt(
     meeting: Meeting,
     sentences: list[Sentence],
     deal_payload: str,
+    *,
+    deal_folder_name: str,
 ) -> str:
     attendees = ", ".join(attendee_names(meeting)) or "unknown"
     participant_emails = ", ".join(meeting.participant_emails) or "unknown"
     excerpt = transcript_excerpt(sentences) or "[no transcript text]"
 
     return (
+        f"Deal folder name: {deal_folder_name}\n\n"
         "Deal documents:\n"
         f"{deal_payload}\n\n"
         "Meeting metadata:\n"
@@ -244,6 +301,7 @@ def classify_relevance(
     sentences: list[Sentence],
     deal_payload: str,
     *,
+    deal_folder_name: str,
     api_key: str,
     model: str,
 ) -> RelevanceResult:
@@ -255,7 +313,12 @@ def classify_relevance(
             {"role": "system", "content": RELEVANCE_SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": build_relevance_prompt(meeting, sentences, deal_payload),
+                "content": build_relevance_prompt(
+                    meeting,
+                    sentences,
+                    deal_payload,
+                    deal_folder_name=deal_folder_name,
+                ),
             },
         ],
     )
@@ -300,6 +363,7 @@ def process_meeting(
         meeting,
         sentences,
         deal_payload,
+        deal_folder_name=folder.name,
         api_key=api_key,
         model=model,
     )
@@ -387,10 +451,10 @@ def main() -> int:
         print(f"Error: path is not a directory: {folder}", file=sys.stderr)
         return 1
 
-    documents = collect_documents(folder, recursive=False)
+    documents = collect_deal_context(folder)
     if not documents:
         print(
-            f"Warning: no readable top-level files found in {folder}",
+            f"Warning: no deal context documents found in {folder}",
             file=sys.stderr,
         )
     deal_payload = build_deal_payload(documents) if documents else "[no deal documents]"
