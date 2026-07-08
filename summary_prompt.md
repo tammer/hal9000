@@ -33,9 +33,13 @@ Discuss the business traction if any. We are interested in ARR, GMV, number of u
 
 # Team's Thoughts
 
+To get team thoughts, do **not** use information from transcripts. Only reference other text documents written by team members. We are interested in thoughts that were NOT shared with the founders during the meetings.
+
 One `##` subheading per team member who left notes (first name only, e.g. `## Tammer`). Skip members with no notes.
 
 Under each: bullet their opinions, questions, concerns, and ideas only. No facts already covered elsewhere. Attribute carefully from initials (TK, SM, AW, DM).
+
+
 
 # Meetings
 

@@ -14,6 +14,8 @@ Create a `.env` file in the project root:
 GOOGLE_DRIVE_BASE="/path/to/your/deals/folder"
 GROQ_API_KEY=your_key_here
 GROQ_MODEL=llama-3.3-70b-versatile   # optional, this is the default
+MEETGEEK_API_KEY=your_key_here
+# MEETGEEK_API_BASE=https://api.meetgeek.ai   # optional
 ```
 
 `GOOGLE_DRIVE_BASE` is the root folder containing deal subfolders. `main.py` resolves paths relative to this root.
@@ -87,3 +89,13 @@ Output path example:
 ```
 /path/to/deals/Acme Corp/contents.json
 ```
+
+### MeetGeek transcripts
+
+Fetch recent MeetGeek transcripts, classify which belong to a deal, and write new `.txt` files into the deal folder:
+
+```bash
+python fetch_transcripts.py "Acme Corp"
+```
+
+Re-runs skip transcripts that are already present (by deterministic filename or MeetGeek meeting ID).
