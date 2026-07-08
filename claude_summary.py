@@ -55,6 +55,33 @@ def build_payload(documents: list[tuple[Path, str]]) -> str:
     return "\n\n".join(sections)
 
 
+def list_top_level_source_files(folder: Path) -> list[Path]:
+    return sorted(
+        entry
+        for entry in folder.iterdir()
+        if entry.is_file()
+        and not entry.name.startswith(".")
+        and not entry.name.startswith("~$")
+    )
+
+
+def existing_summary_if_current(folder: Path) -> Path | None:
+    summary_path = folder / "analysis" / "summary.md"
+    if not summary_path.is_file():
+        return None
+
+    source_files = list_top_level_source_files(folder)
+    if not source_files:
+        return None
+
+    summary_mtime = summary_path.stat().st_mtime
+    for source in source_files:
+        if source.stat().st_mtime >= summary_mtime:
+            return None
+
+    return summary_path
+
+
 def resolve_folder_path(relative_path: str) -> Path:
     base_raw = os.getenv("GOOGLE_DRIVE_BASE")
     if not base_raw:
@@ -184,6 +211,14 @@ def main() -> int:
     if not folder.is_dir():
         print(f"Error: path is not a directory: {folder}", file=sys.stderr)
         return 1
+
+    current_summary = existing_summary_if_current(folder)
+    if current_summary is not None:
+        print(
+            "No new source documents since the last summary was generated. "
+            f"Existing summary: {current_summary}"
+        )
+        return 0
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
