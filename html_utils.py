@@ -23,11 +23,23 @@ def strip_markdown_fences(text: str) -> str:
     return text.strip()
 
 
+HREF_ATTR_RE = re.compile(r"""href\s*=\s*(['"])(.*?)\1""", re.IGNORECASE)
+
+
+def is_external_href(href: str) -> bool:
+    return bool(re.match(r"^[a-z][a-z0-9+.-]*:", href, re.IGNORECASE))
+
+
 def add_target_blank_to_links(html: str) -> str:
     def add_target(match: re.Match[str]) -> str:
         attrs = match.group(1)
         if re.search(r"\btarget\s*=", attrs, re.IGNORECASE):
             return match.group(0)
+
+        href_match = HREF_ATTR_RE.search(attrs)
+        if href_match and not is_external_href(href_match.group(2)):
+            return match.group(0)
+
         return f'<a {attrs.rstrip()} target="_blank">'
 
     return ANCHOR_TAG_RE.sub(add_target, html)
