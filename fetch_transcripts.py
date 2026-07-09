@@ -204,7 +204,7 @@ def sentence_offset(sentence: Sentence, meeting_start: datetime | None) -> str:
 
 def format_transcript_text(meeting: Meeting, sentences: list[Sentence]) -> str:
     attendees = ", ".join(attendee_names(meeting))
-    link = meeting.join_link or meeting_link(meeting.meeting_id)
+    meetgeek_link = meeting_link(meeting.meeting_id)
     meeting_start = parse_meeting_start(meeting.timestamp_start_utc)
 
     lines = [
@@ -214,7 +214,7 @@ def format_transcript_text(meeting: Meeting, sentences: list[Sentence]) -> str:
         "Location: Meet",
         f"Date: {meeting.timestamp_start_utc}",
         f"Attendees: {attendees}",
-        f"Link: {link}",
+        f"Link: {meetgeek_link}",
         "",
         "MeetGeek Transcript",
     ]
