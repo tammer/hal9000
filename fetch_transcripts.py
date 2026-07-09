@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -15,6 +14,7 @@ from groq import Groq
 
 from document_utils import read_file_as_text
 from generate_contents import resolve_folder_path
+from get_facts import parse_json_response
 from meetgeek_client import (
     MeetGeekError,
     Meeting,
@@ -24,13 +24,6 @@ from meetgeek_client import (
     list_recent_meetings,
 )
 
-ANTLER_TEAM = [
-    "Tammer Kamel",
-    "Shambhavi Mishra",
-    "Alex Wright",
-    "Daphne McLarty",
-    "Bernie Li",
-]
 LOOKBACK_DAYS = 4
 MAX_DEAL_DOC_CHARS = 100_000
 TRANSCRIPT_EXCERPT_CHARS = 3_000
@@ -38,119 +31,49 @@ MEETING_LINK_PREFIX = "https://app.meetgeek.ai/meeting/"
 
 TRANSCRIPT_FILENAME_MARKER = "_sentences_"
 
-RELEVANCE_SYSTEM_PROMPT = """You decide whether a MeetGeek meeting transcript belongs to a specific startup deal folder.
+IDENTITY_EXTRACTION_SYSTEM_PROMPT = """You extract the canonical identity of a startup deal from its deal documents.
+
+Return valid JSON only with this exact shape:
+{"company_name": "Acme Inc" or null, "human_names": ["Full Name", ...]}
+
+Include:
+- company_name: the startup or company name if one is clearly named; otherwise null
+- human_names: full names of founders and external contacts (not Antler staff)
+
+Rules:
+- These Antler team members appear on many deals and must be excluded from human_names:
+  Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
+- Use full names as written in the documents when possible
+- The deal folder name is often a founder's first name and may be misspelled; use it only as a weak hint
+- Do not invent names or companies not supported by the documents
+"""
+
+TRANSCRIPT_RELEVANCE_SYSTEM_PROMPT = """You decide whether a MeetGeek meeting belongs to a specific startup deal.
+
+You are given the deal's company name (if any) and human names extracted from deal documents.
 
 Return valid JSON only with this exact shape:
 {"relevant": true, "reason": "short explanation"}
 
-Step 1 — extract the deal's canonical identity from the deal documents only:
-- Company name
-- Founder and external contact full names
-- Known contact emails
-- Product name
-The deal folder name is often a founder's first name and may be misspelled. Use it only as a weak hint alongside explicit names in the documents.
-
-Step 2 — decide relevance using strict matching:
-A meeting is relevant ONLY if you can point to a specific entity named in the deal documents that also appears in the meeting (title, attendee names, participant emails, or transcript), such as:
-- An external participant's full name or email matches a founder/contact listed in the deal documents
-- The meeting title names the deal's company
-- The transcript discusses the deal's company, product, or founders using those exact names
+A meeting is relevant ONLY if the company name and/or one of the human names appears in the meeting title, attendee names, participant emails, host email, or transcript text.
 
 Hard rules:
 - These Antler team members appear on ALL deals and must NEVER determine relevance:
   Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
-- Do NOT match similar-sounding or partially similar names (e.g. Chen is not Chan, Hartmann is not Hong)
-- Do NOT infer company matches from email domains, substrings, or unrelated brands (e.g. atlasaos.com does not match a deal unless that exact company is named in the deal documents)
-- Do NOT mark relevant based on shared generic topics (AI, enterprise, inference, fundraising, B2B) that apply to many deals
-- Do NOT mark relevant because someone is "mentioned in the deal documents" unless you can quote the exact matching name, email, or company from those documents in your reason
-- If you cannot cite a concrete cross-match between deal documents and meeting metadata/transcript, set relevant=false
-- When evidence is ambiguous or requires guesswork, set relevant=false
+- Do NOT match similar-sounding or partially similar names (e.g. Chen is not Chan)
+- Do NOT infer company matches from email domains or substrings
+- Do NOT mark relevant based on shared generic topics alone
+- If no company name or human name from the deal identity appears in the meeting, set relevant=false
+- When evidence is ambiguous, set relevant=false
 
-reason must be one concise sentence. If relevant=true, name the specific matching entity from the deal documents and where it appears in the meeting.
+reason must be one concise sentence. If relevant=true, name the matching company or person and where it appears in the meeting.
 """
 
-JSON_FENCE_RE = re.compile(
-    r"^```(?:json)?\s*\n(.*?)\n```\s*$",
-    re.DOTALL | re.IGNORECASE,
-)
 
-
-def _meeting_search_blob(meeting: Meeting, sentences: list[Sentence]) -> str:
-    parts = [
-        meeting.title,
-        meeting.host_email,
-        " ".join(meeting.participant_emails),
-        " ".join(attendee_names(meeting)),
-    ]
-    parts.extend(sentence.transcript for sentence in sentences)
-    return "\n".join(parts).lower()
-
-
-def extract_deal_identity_terms(deal_payload: str) -> list[str]:
-    terms: list[str] = []
-    seen: set[str] = set()
-
-    def add(term: str) -> None:
-        cleaned = " ".join(term.split())
-        if len(cleaned) < 3:
-            return
-        key = cleaned.lower()
-        if key in seen:
-            return
-        seen.add(key)
-        terms.append(cleaned)
-
-    for email in re.findall(r"[\w.+-]+@[\w.-]+\.\w+", deal_payload, re.IGNORECASE):
-        if email.lower().endswith("@antler.co"):
-            continue
-        add(email)
-
-    for match in re.finditer(r"\[([^\]]+)\]\([^)]+\)", deal_payload):
-        add(match.group(1))
-
-    for line in deal_payload.splitlines():
-        stripped = line.strip()
-        if re.fullmatch(r"[A-Z][a-z]+(?: [A-Z][a-z]+)+", stripped):
-            add(stripped)
-
-    return terms
-
-
-def identity_term_matches(term: str, meeting: Meeting, blob: str) -> bool:
-    lower_term = term.lower()
-    if "@" in lower_term:
-        emails = {email.lower() for email in meeting.participant_emails}
-        if meeting.host_email:
-            emails.add(meeting.host_email.lower())
-        return lower_term in emails
-
-    if " " in lower_term:
-        if lower_term in blob:
-            return True
-        parts = [part for part in lower_term.split() if len(part) >= 3]
-        if len(parts) >= 2:
-            return all(
-                re.search(rf"\b{re.escape(part)}\b", blob) for part in parts
-            )
-        return False
-
-    if len(lower_term) < 4:
-        return False
-    return lower_term in blob
-
-
-def verify_deal_match(
-    meeting: Meeting,
-    sentences: list[Sentence],
-    terms: list[str],
-) -> tuple[bool, str | None]:
-    if not terms:
-        return False, None
-    blob = _meeting_search_blob(meeting, sentences)
-    for term in terms:
-        if identity_term_matches(term, meeting, blob):
-            return True, term
-    return False, None
+@dataclass(frozen=True)
+class DealIdentity:
+    company_name: str | None
+    human_names: list[str]
 
 
 @dataclass(frozen=True)
@@ -166,14 +89,6 @@ class MeetingOutcome:
     date_label: str
     filename: str | None = None
     reason: str = ""
-
-
-def parse_json_response(text: str) -> dict[str, object]:
-    stripped = text.strip()
-    match = JSON_FENCE_RE.match(stripped)
-    if match:
-        stripped = match.group(1).strip()
-    return json.loads(stripped)
 
 
 def build_deal_payload(documents: list[tuple[Path, str]]) -> str:
@@ -350,21 +265,84 @@ def find_existing_transcript(
     return None
 
 
-def build_relevance_prompt(
-    meeting: Meeting,
-    sentences: list[Sentence],
+def build_identity_extraction_prompt(
     deal_payload: str,
     *,
     deal_folder_name: str,
 ) -> str:
-    attendees = ", ".join(attendee_names(meeting)) or "unknown"
-    participant_emails = ", ".join(meeting.participant_emails) or "unknown"
-    excerpt = transcript_excerpt(sentences) or "[no transcript text]"
-
     return (
         f"Deal folder name: {deal_folder_name}\n\n"
         "Deal documents:\n"
-        f"{deal_payload}\n\n"
+        f"{deal_payload}"
+    )
+
+
+def extract_deal_identity(
+    deal_payload: str,
+    *,
+    deal_folder_name: str,
+    api_key: str,
+    model: str,
+) -> DealIdentity:
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model,
+        temperature=0.1,
+        messages=[
+            {"role": "system", "content": IDENTITY_EXTRACTION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": build_identity_extraction_prompt(
+                    deal_payload,
+                    deal_folder_name=deal_folder_name,
+                ),
+            },
+        ],
+    )
+
+    payload = parse_json_response(response.choices[0].message.content or "")
+    company_raw = payload.get("company_name")
+    company_name = str(company_raw).strip() if company_raw else None
+    if company_name and company_name.lower() in {"null", "none", ""}:
+        company_name = None
+
+    human_names: list[str] = []
+    for name in payload.get("human_names", []):
+        cleaned = str(name).strip()
+        if cleaned:
+            human_names.append(cleaned)
+
+    return DealIdentity(company_name=company_name, human_names=human_names)
+
+
+def print_deal_identity(identity: DealIdentity) -> None:
+    print("Deal identity (from documents):")
+    if identity.company_name:
+        print(f"  Company: {identity.company_name}")
+    else:
+        print("  Company: (none identified)")
+    if identity.human_names:
+        print(f"  People: {', '.join(identity.human_names)}")
+    else:
+        print("  People: (none identified)")
+    print()
+
+
+def build_relevance_prompt(
+    meeting: Meeting,
+    sentences: list[Sentence],
+    identity: DealIdentity,
+) -> str:
+    attendees = ", ".join(attendee_names(meeting)) or "unknown"
+    participant_emails = ", ".join(meeting.participant_emails) or "unknown"
+    excerpt = transcript_excerpt(sentences) or "[no transcript text]"
+    company = identity.company_name or "(none)"
+    people = ", ".join(identity.human_names) or "(none)"
+
+    return (
+        "Deal identity:\n"
+        f"- Company: {company}\n"
+        f"- People: {people}\n\n"
         "Meeting metadata:\n"
         f"- Title: {meeting.title}\n"
         f"- Date: {meeting.timestamp_start_utc}\n"
@@ -379,9 +357,8 @@ def build_relevance_prompt(
 def classify_relevance(
     meeting: Meeting,
     sentences: list[Sentence],
-    deal_payload: str,
+    identity: DealIdentity,
     *,
-    deal_folder_name: str,
     api_key: str,
     model: str,
 ) -> RelevanceResult:
@@ -390,15 +367,10 @@ def classify_relevance(
         model=model,
         temperature=0.1,
         messages=[
-            {"role": "system", "content": RELEVANCE_SYSTEM_PROMPT},
+            {"role": "system", "content": TRANSCRIPT_RELEVANCE_SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": build_relevance_prompt(
-                    meeting,
-                    sentences,
-                    deal_payload,
-                    deal_folder_name=deal_folder_name,
-                ),
+                "content": build_relevance_prompt(meeting, sentences, identity),
             },
         ],
     )
@@ -419,7 +391,7 @@ def meeting_date_label(timestamp_start_utc: str) -> str:
 def process_meeting(
     folder: Path,
     meeting_id: str,
-    deal_payload: str,
+    identity: DealIdentity,
     *,
     api_key: str,
     model: str,
@@ -442,25 +414,10 @@ def process_meeting(
     relevance = classify_relevance(
         meeting,
         sentences,
-        deal_payload,
-        deal_folder_name=folder.name,
+        identity,
         api_key=api_key,
         model=model,
     )
-
-    identity_terms = extract_deal_identity_terms(deal_payload)
-    verified, _ = verify_deal_match(meeting, sentences, identity_terms)
-
-    if relevance.relevant and not verified:
-        return MeetingOutcome(
-            status="not_relevant",
-            title=meeting.title,
-            date_label=date_label,
-            reason=(
-                "No deal identity from documents appears in this meeting "
-                f"(LLM claimed: {relevance.reason})"
-            ),
-        )
 
     if not relevance.relevant:
         return MeetingOutcome(
@@ -555,6 +512,19 @@ def main() -> int:
     deal_payload = build_deal_payload(documents) if documents else "[no deal documents]"
 
     try:
+        identity = extract_deal_identity(
+            deal_payload,
+            deal_folder_name=folder.name,
+            api_key=api_key,
+            model=model,
+        )
+    except Exception as exc:
+        print(f"Error: failed to extract deal identity: {exc}", file=sys.stderr)
+        return 1
+
+    print_deal_identity(identity)
+
+    try:
         meeting_summaries = list_recent_meetings(days=LOOKBACK_DAYS)
     except MeetGeekError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -572,7 +542,7 @@ def main() -> int:
             outcome = process_meeting(
                 folder,
                 summary.meeting_id,
-                deal_payload,
+                identity,
                 api_key=api_key,
                 model=model,
             )
