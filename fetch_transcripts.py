@@ -75,6 +75,84 @@ JSON_FENCE_RE = re.compile(
 )
 
 
+def _meeting_search_blob(meeting: Meeting, sentences: list[Sentence]) -> str:
+    parts = [
+        meeting.title,
+        meeting.host_email,
+        " ".join(meeting.participant_emails),
+        " ".join(attendee_names(meeting)),
+    ]
+    parts.extend(sentence.transcript for sentence in sentences)
+    return "\n".join(parts).lower()
+
+
+def extract_deal_identity_terms(deal_payload: str) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def add(term: str) -> None:
+        cleaned = " ".join(term.split())
+        if len(cleaned) < 3:
+            return
+        key = cleaned.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        terms.append(cleaned)
+
+    for email in re.findall(r"[\w.+-]+@[\w.-]+\.\w+", deal_payload, re.IGNORECASE):
+        if email.lower().endswith("@antler.co"):
+            continue
+        add(email)
+
+    for match in re.finditer(r"\[([^\]]+)\]\([^)]+\)", deal_payload):
+        add(match.group(1))
+
+    for line in deal_payload.splitlines():
+        stripped = line.strip()
+        if re.fullmatch(r"[A-Z][a-z]+(?: [A-Z][a-z]+)+", stripped):
+            add(stripped)
+
+    return terms
+
+
+def identity_term_matches(term: str, meeting: Meeting, blob: str) -> bool:
+    lower_term = term.lower()
+    if "@" in lower_term:
+        emails = {email.lower() for email in meeting.participant_emails}
+        if meeting.host_email:
+            emails.add(meeting.host_email.lower())
+        return lower_term in emails
+
+    if " " in lower_term:
+        if lower_term in blob:
+            return True
+        parts = [part for part in lower_term.split() if len(part) >= 3]
+        if len(parts) >= 2:
+            return all(
+                re.search(rf"\b{re.escape(part)}\b", blob) for part in parts
+            )
+        return False
+
+    if len(lower_term) < 4:
+        return False
+    return lower_term in blob
+
+
+def verify_deal_match(
+    meeting: Meeting,
+    sentences: list[Sentence],
+    terms: list[str],
+) -> tuple[bool, str | None]:
+    if not terms:
+        return False, None
+    blob = _meeting_search_blob(meeting, sentences)
+    for term in terms:
+        if identity_term_matches(term, meeting, blob):
+            return True, term
+    return False, None
+
+
 @dataclass(frozen=True)
 class RelevanceResult:
     relevant: bool
@@ -264,6 +342,8 @@ def find_existing_transcript(
     for entry in folder.iterdir():
         if not entry.is_file() or entry.name.startswith("."):
             continue
+        if entry.suffix.lower() != ".txt":
+            continue
         text = read_file_as_text(entry)
         if text and needle in text.lower():
             return entry
@@ -367,6 +447,21 @@ def process_meeting(
         api_key=api_key,
         model=model,
     )
+
+    identity_terms = extract_deal_identity_terms(deal_payload)
+    verified, _ = verify_deal_match(meeting, sentences, identity_terms)
+
+    if relevance.relevant and not verified:
+        return MeetingOutcome(
+            status="not_relevant",
+            title=meeting.title,
+            date_label=date_label,
+            reason=(
+                "No deal identity from documents appears in this meeting "
+                f"(LLM claimed: {relevance.reason})"
+            ),
+        )
+
     if not relevance.relevant:
         return MeetingOutcome(
             status="not_relevant",
