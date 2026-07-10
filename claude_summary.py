@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from anthropic import Anthropic
@@ -48,6 +49,11 @@ def strip_markdown_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return text.strip()
+
+
+def append_generated_timestamp(markdown: str) -> str:
+    stamp = datetime.now().strftime("Generated at %H:%M on %b-%d")
+    return f"{markdown.rstrip()}\n\n{stamp}\n"
 
 
 def build_payload(documents: list[tuple[Path, str]]) -> str:
@@ -171,7 +177,9 @@ def generate_summary(
         ],
     )
 
-    text = strip_markdown_fences(extract_response_text(response))
+    text = append_generated_timestamp(
+        strip_markdown_fences(extract_response_text(response))
+    )
     return text, response
 
 
