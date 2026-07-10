@@ -302,12 +302,12 @@ def meeting_match_haystack(meeting: Meeting, sentences: list[Sentence]) -> str:
     return " ".join(part for part in parts if part)
 
 
-def find_programmatic_deal_match(
-    meeting: Meeting,
-    sentences: list[Sentence],
+def find_programmatic_deal_match_from_haystack(
+    haystack: str,
     catalog: list[DealCatalogEntry],
+    *,
+    source_label: str = "content",
 ) -> MatchResult | None:
-    haystack = meeting_match_haystack(meeting, sentences)
     matched_folders: list[str] = []
 
     for deal in catalog:
@@ -337,9 +337,22 @@ def find_programmatic_deal_match(
     if len(unique) == 1:
         return MatchResult(
             deal_folder=unique[0],
-            reason=f"Matched {unique[0]} by name or folder in meeting content.",
+            reason=f"Matched {unique[0]} by name or folder in {source_label}.",
         )
     return None
+
+
+def find_programmatic_deal_match(
+    meeting: Meeting,
+    sentences: list[Sentence],
+    catalog: list[DealCatalogEntry],
+) -> MatchResult | None:
+    haystack = meeting_match_haystack(meeting, sentences)
+    return find_programmatic_deal_match_from_haystack(
+        haystack,
+        catalog,
+        source_label="meeting content",
+    )
 
 
 def build_deal_match_prompt(
