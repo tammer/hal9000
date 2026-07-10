@@ -1,11 +1,2 @@
-brain@tammer.com cc'ing
-
-fetch
-claude each dir
-gen summary
-gen website
 
 if there is a dir with nothing else, note it!
-
-add aqutiva
-

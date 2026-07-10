@@ -24,12 +24,20 @@ from meetgeek_client import (
     list_recent_meetings,
 )
 
-LOOKBACK_DAYS = 4
+LOOKBACK_DAYS = 8
 MAX_DEAL_DOC_CHARS = 100_000
 TRANSCRIPT_EXCERPT_CHARS = 3_000
 MEETING_LINK_PREFIX = "https://app.meetgeek.ai/meeting/"
 
 TRANSCRIPT_FILENAME_MARKER = "_sentences_"
+
+ANTLER_STAFF = {
+    "tammer kamel",
+    "shambhavi mishra",
+    "alex wright",
+    "daphne mclarty",
+    "bernie li",
+}
 
 IDENTITY_EXTRACTION_SYSTEM_PROMPT = """You extract the canonical identity of a startup deal from its deal documents.
 
@@ -38,7 +46,7 @@ Return valid JSON only with this exact shape:
 
 Include:
 - company_name: the startup or company name if one is clearly named; otherwise null
-- human_names: full names of founders and external contacts (not Antler staff)
+- human_names: full names of founders (not Antler staff)
 
 Rules:
 - These Antler team members appear on many deals and must be excluded from human_names:
@@ -90,6 +98,18 @@ class RelevanceResult:
 
 
 @dataclass(frozen=True)
+class DealMatchTarget:
+    folder_name: str
+    identity: DealIdentity
+
+
+@dataclass(frozen=True)
+class MatchResult:
+    deal_folder: str | None
+    reason: str
+
+
+@dataclass(frozen=True)
 class MeetingOutcome:
     status: str
     title: str
@@ -133,7 +153,11 @@ def is_meetgeek_transcript(path: Path) -> bool:
     return path.suffix.lower() == ".txt" and TRANSCRIPT_FILENAME_MARKER in path.name
 
 
-def collect_deal_context(folder: Path) -> list[tuple[Path, str]]:
+def collect_deal_context(
+    folder: Path,
+    *,
+    summary_only: bool = False,
+) -> list[tuple[Path, str]]:
     documents: list[tuple[Path, str]] = []
 
     summary_path = folder / "ai-generated" / "summary.md"
@@ -141,6 +165,8 @@ def collect_deal_context(folder: Path) -> list[tuple[Path, str]]:
         summary_text = read_file_as_text(summary_path)
         if summary_text:
             documents.append((summary_path, summary_text))
+        if summary_only:
+            return documents
 
     for entry in sorted(folder.iterdir()):
         if not entry.is_file():
@@ -318,6 +344,21 @@ def groq_json_chat(
     raise RuntimeError("Groq JSON chat failed without a response")
 
 
+def parse_identity_payload(payload: dict) -> DealIdentity:
+    company_raw = payload.get("company_name")
+    company_name = str(company_raw).strip() if company_raw else None
+    if company_name and company_name.lower() in {"null", "none", ""}:
+        company_name = None
+
+    human_names: list[str] = []
+    for name in payload.get("human_names", []):
+        cleaned = str(name).strip()
+        if cleaned:
+            human_names.append(cleaned)
+
+    return DealIdentity(company_name=company_name, human_names=human_names)
+
+
 def extract_deal_identity(
     deal_payload: str,
     *,
@@ -334,18 +375,7 @@ def extract_deal_identity(
         api_key=api_key,
         model=model,
     )
-    company_raw = payload.get("company_name")
-    company_name = str(company_raw).strip() if company_raw else None
-    if company_name and company_name.lower() in {"null", "none", ""}:
-        company_name = None
-
-    human_names: list[str] = []
-    for name in payload.get("human_names", []):
-        cleaned = str(name).strip()
-        if cleaned:
-            human_names.append(cleaned)
-
-    return DealIdentity(company_name=company_name, human_names=human_names)
+    return parse_identity_payload(payload)
 
 
 def print_deal_identity(identity: DealIdentity) -> None:
@@ -361,21 +391,15 @@ def print_deal_identity(identity: DealIdentity) -> None:
     print()
 
 
-def build_relevance_prompt(
+def build_meeting_metadata_prompt(
     meeting: Meeting,
     sentences: list[Sentence],
-    identity: DealIdentity,
 ) -> str:
     attendees = ", ".join(attendee_names(meeting)) or "unknown"
     participant_emails = ", ".join(meeting.participant_emails) or "unknown"
     excerpt = transcript_excerpt(sentences) or "[no transcript text]"
-    company = identity.company_name or "(none)"
-    people = ", ".join(identity.human_names) or "(none)"
 
     return (
-        "Deal identity:\n"
-        f"- Company: {company}\n"
-        f"- People: {people}\n\n"
         "Meeting metadata:\n"
         f"- Title: {meeting.title}\n"
         f"- Date: {meeting.timestamp_start_utc}\n"
@@ -384,6 +408,22 @@ def build_relevance_prompt(
         f"- Host email: {meeting.host_email or 'unknown'}\n\n"
         "Transcript excerpt:\n"
         f"{excerpt}"
+    )
+
+
+def build_relevance_prompt(
+    meeting: Meeting,
+    sentences: list[Sentence],
+    identity: DealIdentity,
+) -> str:
+    company = identity.company_name or "(none)"
+    people = ", ".join(identity.human_names) or "(none)"
+
+    return (
+        "Deal identity:\n"
+        f"- Company: {company}\n"
+        f"- People: {people}\n\n"
+        f"{build_meeting_metadata_prompt(meeting, sentences)}"
     )
 
 
@@ -406,6 +446,114 @@ def classify_relevance(
     return RelevanceResult(relevant=relevant, reason=reason)
 
 
+def word_in_text(word: str, text: str) -> bool:
+    if not word or len(word) < 2:
+        return False
+    return bool(re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE))
+
+
+def meeting_match_haystack(meeting: Meeting, sentences: list[Sentence]) -> str:
+    parts = [
+        meeting.title,
+        " ".join(attendee_names(meeting)),
+        " ".join(meeting.participant_emails),
+        meeting.host_email or "",
+        transcript_excerpt(sentences),
+    ]
+    return " ".join(part for part in parts if part)
+
+
+def find_programmatic_deal_match_from_haystack(
+    haystack: str,
+    targets: list[DealMatchTarget],
+    *,
+    source_label: str = "content",
+) -> MatchResult | None:
+    matched_folders: list[str] = []
+
+    for target in targets:
+        if word_in_text(target.folder_name, haystack):
+            matched_folders.append(target.folder_name)
+            continue
+
+        if target.identity.company_name and word_in_text(
+            target.identity.company_name,
+            haystack,
+        ):
+            matched_folders.append(target.folder_name)
+            continue
+
+        for name in target.identity.human_names:
+            if name.lower() in ANTLER_STAFF:
+                continue
+            name_parts = name.split()
+            first_name = name_parts[0] if name_parts else ""
+            if word_in_text(name, haystack) or (
+                len(first_name) >= 3 and word_in_text(first_name, haystack)
+            ):
+                matched_folders.append(target.folder_name)
+                break
+
+    unique = sorted(set(matched_folders))
+    if len(unique) == 1:
+        return MatchResult(
+            deal_folder=unique[0],
+            reason=f"Matched {unique[0]} by name or folder in {source_label}.",
+        )
+    return None
+
+
+def find_programmatic_deal_match(
+    meeting: Meeting,
+    sentences: list[Sentence],
+    targets: list[DealMatchTarget],
+) -> MatchResult | None:
+    haystack = meeting_match_haystack(meeting, sentences)
+    return find_programmatic_deal_match_from_haystack(
+        haystack,
+        targets,
+        source_label="meeting content",
+    )
+
+
+def find_matching_deal(
+    meeting: Meeting,
+    sentences: list[Sentence],
+    targets: list[DealMatchTarget],
+    *,
+    api_key: str,
+    model: str,
+) -> MatchResult:
+    programmatic = find_programmatic_deal_match(meeting, sentences, targets)
+    if programmatic is not None:
+        return programmatic
+
+    matches: list[tuple[str, str]] = []
+    for target in targets:
+        relevance = classify_relevance(
+            meeting,
+            sentences,
+            target.identity,
+            api_key=api_key,
+            model=model,
+        )
+        if relevance.relevant:
+            matches.append((target.folder_name, relevance.reason))
+
+    if len(matches) == 1:
+        return MatchResult(deal_folder=matches[0][0], reason=matches[0][1])
+    if len(matches) > 1:
+        folder_names = ", ".join(name for name, _ in matches)
+        return MatchResult(
+            deal_folder=None,
+            reason=f"Multiple deals matched: {folder_names}.",
+        )
+    return MatchResult(
+        deal_folder=None,
+        reason="No deal identity matched the meeting.",
+    )
+
+
 def meeting_date_label(timestamp_start_utc: str) -> str:
     meeting_start = parse_meeting_start(timestamp_start_utc)
     if meeting_start is None:
@@ -420,6 +568,7 @@ def process_meeting(
     *,
     api_key: str,
     model: str,
+    dry_run: bool = False,
 ) -> MeetingOutcome:
     meeting = get_meeting(meeting_id)
     sentences = get_transcript(meeting_id)
@@ -453,6 +602,15 @@ def process_meeting(
         )
 
     filename = f"{basename}.txt"
+    if dry_run:
+        return MeetingOutcome(
+            status="would_write",
+            title=meeting.title,
+            date_label=date_label,
+            filename=filename,
+            reason=relevance.reason,
+        )
+
     output_path = folder / filename
     output_path.write_text(
         format_transcript_text(meeting, sentences),
@@ -470,6 +628,11 @@ def process_meeting(
 def print_outcome(outcome: MeetingOutcome) -> None:
     if outcome.status == "written":
         print(f"WRITTEN: {outcome.filename}")
+        print(f"  Reason: {outcome.reason}")
+        return
+
+    if outcome.status == "would_write":
+        print(f"WOULD WRITE: {outcome.filename}")
         print(f"  Reason: {outcome.reason}")
         return
 
@@ -499,6 +662,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "relative_path",
         help="Relative path under Google Drive to the deal folder",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report actions without writing files.",
     )
     return parser.parse_args()
 
@@ -549,6 +717,10 @@ def main() -> int:
 
     print_deal_identity(identity)
 
+    if args.dry_run:
+        print("Dry run: no files will be written.")
+        print()
+
     try:
         meeting_summaries = list_recent_meetings(days=LOOKBACK_DAYS)
     except MeetGeekError as exc:
@@ -570,6 +742,7 @@ def main() -> int:
                 identity,
                 api_key=api_key,
                 model=model,
+                dry_run=args.dry_run,
             )
         except Exception as exc:
             outcome = MeetingOutcome(
@@ -583,18 +756,30 @@ def main() -> int:
         print_outcome(outcome)
 
     written = sum(1 for outcome in outcomes if outcome.status == "written")
+    would_write = sum(1 for outcome in outcomes if outcome.status == "would_write")
     skipped = sum(1 for outcome in outcomes if outcome.status == "skipped")
     not_relevant = sum(1 for outcome in outcomes if outcome.status == "not_relevant")
     errors = sum(1 for outcome in outcomes if outcome.status == "error")
 
     print()
-    print(
-        "FETCHED: "
-        f"{len(meeting_summaries)} meetings in last {LOOKBACK_DAYS} days | "
-        f"{written} written | {skipped} skipped | {not_relevant} not relevant"
-        + (f" | {errors} errors" if errors else "")
+    summary_parts = [
+        f"{len(meeting_summaries)} meetings in last {LOOKBACK_DAYS} days",
+    ]
+    if args.dry_run:
+        summary_parts.append(f"{would_write} would write")
+    else:
+        summary_parts.append(f"{written} written")
+    summary_parts.extend(
+        [
+            f"{skipped} skipped",
+            f"{not_relevant} not relevant",
+        ]
     )
-    return 1 if errors and written == 0 and skipped == 0 else 0
+    if errors:
+        summary_parts.append(f"{errors} errors")
+
+    print("FETCHED: " + " | ".join(summary_parts))
+    return 1 if errors and written == 0 and would_write == 0 and skipped == 0 else 0
 
 
 if __name__ == "__main__":
