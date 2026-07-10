@@ -147,6 +147,58 @@ def list_recent_meetings(days: int = 4) -> list[MeetingSummary]:
     return meetings
 
 
+def list_team_meetings(team_id: str, cutoff: datetime) -> list[MeetingSummary]:
+    meetings: list[MeetingSummary] = []
+    cursor: str | None = None
+
+    while True:
+        query: dict[str, str | int] = {"limit": 500}
+        if cursor:
+            query["cursor"] = cursor
+
+        payload = _fetch_json(
+            _build_url(f"/v1/teams/{team_id}/meetings", query)
+        )
+        page_meetings = payload.get("meetings", [])
+        if not isinstance(page_meetings, list):
+            raise MeetGeekError("MeetGeek team meetings response missing meetings list")
+
+        if not page_meetings:
+            break
+
+        page_has_recent = False
+        for item in page_meetings:
+            if not isinstance(item, dict):
+                continue
+            meeting_id = str(item.get("meeting_id", "")).strip()
+            start = str(item.get("timestamp_start_utc", "")).strip()
+            end = str(item.get("timestamp_end_utc", "")).strip()
+            if not meeting_id or not start:
+                continue
+
+            start_dt = _parse_iso_datetime(start)
+            if start_dt >= cutoff:
+                meetings.append(
+                    MeetingSummary(
+                        meeting_id=meeting_id,
+                        timestamp_start_utc=start,
+                        timestamp_end_utc=end,
+                    )
+                )
+                page_has_recent = True
+
+        pagination = payload.get("pagination", {})
+        next_cursor = ""
+        if isinstance(pagination, dict):
+            next_cursor = str(pagination.get("next_cursor", "")).strip()
+
+        if not page_has_recent or not next_cursor:
+            break
+        cursor = next_cursor
+
+    return meetings
+
+
 def get_meeting(meeting_id: str) -> Meeting:
     payload = _fetch_json(_build_url(f"/v1/meetings/{meeting_id}"))
     title = str(payload.get("title", "")).strip() or "Untitled Meeting"

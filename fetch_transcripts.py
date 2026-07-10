@@ -46,7 +46,14 @@ Rules:
 - Use full names as written in the documents when possible
 - The deal folder name is often a founder's first name and may be misspelled; use it only as a weak hint
 - Do not invent names or companies not supported by the documents
+- human_names must contain only person name strings; never include explanations or commentary in JSON values
 """
+
+JSON_RETRY_PROMPT = (
+    "Your previous response was not valid JSON. "
+    "Return only valid JSON with no commentary inside values or arrays."
+)
+MAX_JSON_RETRIES = 3
 
 TRANSCRIPT_RELEVANCE_SYSTEM_PROMPT = """You decide whether a MeetGeek meeting belongs to a specific startup deal.
 
@@ -277,6 +284,40 @@ def build_identity_extraction_prompt(
     )
 
 
+def groq_json_chat(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    api_key: str,
+    model: str,
+) -> dict:
+    client = Groq(api_key=api_key)
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    last_error: Exception | None = None
+
+    for _ in range(MAX_JSON_RETRIES):
+        response = client.chat.completions.create(
+            model=model,
+            temperature=0.1,
+            response_format={"type": "json_object"},
+            messages=messages,
+        )
+        content = response.choices[0].message.content or ""
+        try:
+            return parse_json_response(content)
+        except Exception as exc:
+            last_error = exc
+            messages.append({"role": "assistant", "content": content})
+            messages.append({"role": "user", "content": JSON_RETRY_PROMPT})
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Groq JSON chat failed without a response")
+
+
 def extract_deal_identity(
     deal_payload: str,
     *,
@@ -284,23 +325,15 @@ def extract_deal_identity(
     api_key: str,
     model: str,
 ) -> DealIdentity:
-    client = Groq(api_key=api_key)
-    response = client.chat.completions.create(
+    payload = groq_json_chat(
+        system_prompt=IDENTITY_EXTRACTION_SYSTEM_PROMPT,
+        user_prompt=build_identity_extraction_prompt(
+            deal_payload,
+            deal_folder_name=deal_folder_name,
+        ),
+        api_key=api_key,
         model=model,
-        temperature=0.1,
-        messages=[
-            {"role": "system", "content": IDENTITY_EXTRACTION_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": build_identity_extraction_prompt(
-                    deal_payload,
-                    deal_folder_name=deal_folder_name,
-                ),
-            },
-        ],
     )
-
-    payload = parse_json_response(response.choices[0].message.content or "")
     company_raw = payload.get("company_name")
     company_name = str(company_raw).strip() if company_raw else None
     if company_name and company_name.lower() in {"null", "none", ""}:
@@ -362,20 +395,12 @@ def classify_relevance(
     api_key: str,
     model: str,
 ) -> RelevanceResult:
-    client = Groq(api_key=api_key)
-    response = client.chat.completions.create(
+    payload = groq_json_chat(
+        system_prompt=TRANSCRIPT_RELEVANCE_SYSTEM_PROMPT,
+        user_prompt=build_relevance_prompt(meeting, sentences, identity),
+        api_key=api_key,
         model=model,
-        temperature=0.1,
-        messages=[
-            {"role": "system", "content": TRANSCRIPT_RELEVANCE_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": build_relevance_prompt(meeting, sentences, identity),
-            },
-        ],
     )
-
-    payload = parse_json_response(response.choices[0].message.content or "")
     relevant = bool(payload.get("relevant"))
     reason = str(payload.get("reason", "")).strip() or "No reason provided."
     return RelevanceResult(relevant=relevant, reason=reason)

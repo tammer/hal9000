@@ -19,7 +19,7 @@ Return valid JSON only with this exact shape:
 {
   "product": "1-2 sentence product summary",
   "founders": "founder name(s), brief",
-  "status": "brief deal status, 25-40 words max"
+  "status": "brief deal status, 25-40 words max. Get this information from the # State section. Include data of last interaction if available in the state section"
 }
 
 Extraction rules:
