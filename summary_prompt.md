@@ -51,15 +51,21 @@ To get team thoughts, do **not** use information from transcripts. Only referenc
 
 One `##` subheading per team member who left notes (first name only, e.g. `## Tammer`). Skip members with no notes.
 
-Under each: bullet their opinions, questions, concerns, and ideas only. No facts already covered elsewhere. Attribute carefully from initials (TK, SM, AW, DM).
+Present team thoughts as a two column table, one row for each opinion, question, concern.
+column1: concisely express the opinion, question, concern
+column2: concisely state any information in the transcripts, notes or materials that speaks to the matter. if there is nothing of note to state here, just leave the cell empty.
+
+Example:
+
+|Item|Additional Information|
+|Who owns the IP| CEO Thomas mentioned that currently he owns all the IP|
+
 
 
 
 # Meetings
 
-One `##` subheading per transcript, chronological (oldest → newest). Title with date when known (`## 2024-03-12`); otherwise a short descriptive title.
-
-If a link to the meetgeek meeting recording is available, include it. it has this form:  https://app.meetgeek.ai/meeting/6721794e-de67-4d93-815f-574cc00a3f4c
+One `##` subheading per transcript, chronological (oldest → newest). Title with date when known (`## 2024-03-12`); otherwise a short descriptive title. If the URL of the meetgeek meeting is available, then make "Title" a link to the actual meeting.
 
 AUnder each: **Attendees** (name + role/affiliation), **Discussion** (bullets: key topics and decisions only), **Next steps** (owner + action when clear). Omit fluff and repeated facts.
 
