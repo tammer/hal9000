@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import html
 import os
 import re
@@ -200,7 +201,20 @@ def generate_index_page(
     print(f"Wrote {output_path.name}", file=sys.stderr)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate the deal portfolio website from summaries."
+    )
+    parser.add_argument(
+        "--deploy",
+        action="store_true",
+        help="Publish the generated site to ICDSoft over SFTP after generation.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
     load_dotenv()
 
     try:
@@ -233,6 +247,12 @@ def main() -> int:
         f"Done: wrote index.html and {deal_count} deal page(s) to {website_dir}",
         file=sys.stderr,
     )
+
+    if args.deploy:
+        from website_deploy import deploy_website
+
+        return deploy_website(website_dir)
+
     return 0
 
 
