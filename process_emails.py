@@ -17,14 +17,16 @@ from dotenv import load_dotenv
 
 from fetch_all_transcripts import (
     DealCatalogEntry,
-    MatchResult,
+    catalog_targets,
     deals_base,
-    find_programmatic_deal_match_from_haystack,
-    format_deal_catalog_for_prompt,
-    groq_json_chat,
     load_deal_catalog,
     print_deal_catalog,
     resolve_catalog_entry,
+)
+from fetch_transcripts import (
+    MatchResult,
+    find_programmatic_deal_match_from_haystack,
+    groq_json_chat,
 )
 
 EMAIL_FILENAME_PREFIX = "email_"
@@ -184,6 +186,19 @@ def find_existing_email(folder: Path, message_id: str) -> Path | None:
     return None
 
 
+def format_deal_catalog_for_prompt(catalog: list[DealCatalogEntry]) -> str:
+    lines: list[str] = []
+    for deal in catalog:
+        company = deal.identity.company_name or "(none)"
+        people = ", ".join(deal.identity.human_names) or "(none)"
+        lines.append(
+            f"- folder: {deal.folder_name}\n"
+            f"  company: {company}\n"
+            f"  people: {people}"
+        )
+    return "\n".join(lines)
+
+
 def build_email_match_prompt(
     message: EmailMessage,
     catalog: list[DealCatalogEntry],
@@ -216,7 +231,7 @@ def match_email_to_deal(
     haystack = email_match_haystack(message)
     programmatic = find_programmatic_deal_match_from_haystack(
         haystack,
-        catalog,
+        catalog_targets(catalog),
         source_label="email content",
     )
     if programmatic is not None:
