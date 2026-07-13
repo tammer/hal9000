@@ -32,6 +32,7 @@ class PipelineResults:
     no_source_docs: list[str] = field(default_factory=list)
     summarizer: str | None = None
     website: str | None = None
+    deploy: str | None = None
     failed_steps: list[str] = field(default_factory=list)
 
 
@@ -148,6 +149,8 @@ def print_pipeline_summary(results: PipelineResults) -> None:
         print(f"  Summarizer: {results.summarizer}")
     if results.website is not None:
         print(f"  Website: {results.website}")
+    if results.deploy is not None:
+        print(f"  Deploy: {results.deploy}")
     if results.failed_steps:
         print(f"  Failed steps: {', '.join(results.failed_steps)}")
 
@@ -178,6 +181,7 @@ def parse_args() -> argparse.Namespace:
         help="Skip step 4.",
     )
     parser.add_argument("--skip-website", action="store_true", help="Skip step 5.")
+    parser.add_argument("--skip-deploy", action="store_true", help="Skip step 6.")
     return parser.parse_args()
 
 
@@ -185,7 +189,7 @@ def main() -> int:
     load_dotenv()
     args = parse_args()
     results = PipelineResults()
-    total_steps = 5
+    total_steps = 6
 
     try:
         base = deals_base()
@@ -275,6 +279,19 @@ def main() -> int:
         results.website = "OK"
     else:
         print("Skipping website (--skip-website)", file=sys.stderr)
+
+    # Step 6: Deploy website
+    if not args.skip_deploy:
+        print_banner(6, total_steps, "Deploy website")
+        completed = run_script("website_deploy.py")
+        if completed.returncode != 0:
+            results.deploy = "FAILED"
+            results.failed_steps.append("deploy")
+            print_pipeline_summary(results)
+            return completed.returncode
+        results.deploy = "OK"
+    else:
+        print("Skipping deploy (--skip-deploy)", file=sys.stderr)
 
     print_pipeline_summary(results)
     return 1 if results.failed_steps else 0
