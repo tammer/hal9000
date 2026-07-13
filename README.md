@@ -276,6 +276,26 @@ python generate_contents.py Mobi
 
 ---
 
+### `actions.py`
+
+Reads a deal's `ai-generated/summary.md` and, using today's date, reports any outstanding actions the Antler team needs to take. An action is flagged when we promised something by a date that is near/at/past, or when we're still waiting on the other party.
+
+```bash
+python actions.py <relative_path>
+```
+
+**Example:**
+
+```bash
+python actions.py Mobi
+```
+
+**Output:** A concise actions report printed to stdout (or `No actions needed.`).
+
+**Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE`, and an existing `ai-generated/summary.md` (run `claude_summary.py` first).
+
+---
+
 ## Research utilities
 
 ### `get_facts.py`
