@@ -31,6 +31,13 @@ MEETING_LINK_PREFIX = "https://app.meetgeek.ai/meeting/"
 
 TRANSCRIPT_FILENAME_MARKER = "_sentences_"
 
+PROCESSED_MEETINGS_PATH = (
+    Path(__file__).resolve().parent / "processed_meetgeek_meetings.txt"
+)
+RECORDABLE_PROCESSED_STATUSES = frozenset(
+    {"written", "no_match", "skipped", "not_relevant"}
+)
+
 ANTLER_STAFF = {
     "tammer kamel",
     "shambhavi mishra",
@@ -123,6 +130,42 @@ class MeetingOutcome:
     date_label: str
     filename: str | None = None
     reason: str = ""
+
+
+def load_processed_meeting_ids(
+    path: Path = PROCESSED_MEETINGS_PATH,
+) -> set[str]:
+    if not path.is_file():
+        return set()
+    ids: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        ids.add(stripped.split()[0])
+    return ids
+
+
+def append_processed_meeting_id(
+    meeting_id: str,
+    path: Path = PROCESSED_MEETINGS_PATH,
+    *,
+    known_ids: set[str] | None = None,
+) -> None:
+    cleaned = meeting_id.strip()
+    if not cleaned:
+        return
+    if known_ids is not None and cleaned in known_ids:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(cleaned + "\n")
+    if known_ids is not None:
+        known_ids.add(cleaned)
+
+
+def should_record_processed(status: str) -> bool:
+    return status in RECORDABLE_PROCESSED_STATUSES
 
 
 def build_deal_payload(documents: list[tuple[Path, str]]) -> str:
@@ -645,6 +688,12 @@ def print_outcome(outcome: MeetingOutcome) -> None:
             print(f"  Reason: {outcome.reason}")
         return
 
+    if outcome.status == "already_processed":
+        print(f"ALREADY PROCESSED: {outcome.title} ({outcome.date_label})")
+        if outcome.reason:
+            print(f"  Reason: {outcome.reason}")
+        return
+
     if outcome.status == "not_relevant":
         print(f"NOT RELEVANT: {outcome.title} ({outcome.date_label})")
         print(f"  Reason: {outcome.reason}")
@@ -670,6 +719,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Report actions without writing files.",
+    )
+    parser.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="Ignore the processed-meetings log and re-analyze all meetings.",
     )
     return parser.parse_args()
 
@@ -736,8 +790,21 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    processed_ids = load_processed_meeting_ids()
+
     outcomes: list[MeetingOutcome] = []
     for summary in meeting_summaries:
+        if not args.reprocess and summary.meeting_id in processed_ids:
+            outcome = MeetingOutcome(
+                status="already_processed",
+                title=summary.meeting_id,
+                date_label=meeting_date_label(summary.timestamp_start_utc),
+                reason="Meeting ID already in processed_meetgeek_meetings.txt.",
+            )
+            outcomes.append(outcome)
+            print_outcome(outcome)
+            continue
+
         try:
             outcome = process_meeting(
                 folder,
@@ -755,12 +822,25 @@ def main() -> int:
                 reason=str(exc),
             )
             print(f"Error processing meeting {summary.meeting_id}: {exc}", file=sys.stderr)
+
+        if (
+            not args.dry_run
+            and should_record_processed(outcome.status)
+        ):
+            append_processed_meeting_id(
+                summary.meeting_id,
+                known_ids=processed_ids,
+            )
+
         outcomes.append(outcome)
         print_outcome(outcome)
 
     written = sum(1 for outcome in outcomes if outcome.status == "written")
     would_write = sum(1 for outcome in outcomes if outcome.status == "would_write")
     skipped = sum(1 for outcome in outcomes if outcome.status == "skipped")
+    already_processed = sum(
+        1 for outcome in outcomes if outcome.status == "already_processed"
+    )
     not_relevant = sum(1 for outcome in outcomes if outcome.status == "not_relevant")
     errors = sum(1 for outcome in outcomes if outcome.status == "error")
 
@@ -775,6 +855,7 @@ def main() -> int:
     summary_parts.extend(
         [
             f"{skipped} skipped",
+            f"{already_processed} already processed",
             f"{not_relevant} not relevant",
         ]
     )

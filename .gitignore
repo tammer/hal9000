@@ -219,3 +219,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local MeetGeek processing state
+processed_meetgeek_meetings.txt

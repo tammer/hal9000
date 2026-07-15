@@ -13,13 +13,16 @@ from dotenv import load_dotenv
 from fetch_transcripts import (
     DealIdentity,
     DealMatchTarget,
+    append_processed_meeting_id,
     build_deal_payload,
     collect_deal_context,
     extract_deal_identity,
     find_existing_transcript,
     find_matching_deal,
     format_transcript_text,
+    load_processed_meeting_ids,
     meeting_date_label,
+    should_record_processed,
     transcript_basename,
 )
 from meetgeek_client import (
@@ -243,6 +246,12 @@ def print_outcome(outcome: MeetingOutcome) -> None:
             print(f"  Reason: {outcome.reason}")
         return
 
+    if outcome.status == "already_processed":
+        print(f"ALREADY PROCESSED: {outcome.title} ({outcome.date_label})")
+        if outcome.reason:
+            print(f"  Reason: {outcome.reason}")
+        return
+
     if outcome.status == "no_match":
         print(f"NO MATCH: {outcome.title} ({outcome.date_label})")
         print(f"  Reason: {outcome.reason}")
@@ -272,6 +281,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Report actions without writing files.",
+    )
+    parser.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="Ignore the processed-meetings log and re-analyze all meetings.",
     )
     return parser.parse_args()
 
@@ -332,8 +346,21 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    processed_ids = load_processed_meeting_ids()
+
     outcomes: list[MeetingOutcome] = []
     for summary in meeting_summaries:
+        if not args.reprocess and summary.meeting_id in processed_ids:
+            outcome = MeetingOutcome(
+                status="already_processed",
+                title=summary.meeting_id,
+                date_label=meeting_date_label(summary.timestamp_start_utc),
+                reason="Meeting ID already in processed_meetgeek_meetings.txt.",
+            )
+            outcomes.append(outcome)
+            print_outcome(outcome)
+            continue
+
         try:
             outcome = process_meeting(
                 summary.meeting_id,
@@ -354,12 +381,22 @@ def main() -> int:
                 f"Error processing meeting {summary.meeting_id}: {exc}",
                 file=sys.stderr,
             )
+
+        if not args.dry_run and should_record_processed(outcome.status):
+            append_processed_meeting_id(
+                summary.meeting_id,
+                known_ids=processed_ids,
+            )
+
         outcomes.append(outcome)
         print_outcome(outcome)
 
     written = sum(1 for outcome in outcomes if outcome.status == "written")
     would_write = sum(1 for outcome in outcomes if outcome.status == "would_write")
     skipped = sum(1 for outcome in outcomes if outcome.status == "skipped")
+    already_processed = sum(
+        1 for outcome in outcomes if outcome.status == "already_processed"
+    )
     no_match = sum(1 for outcome in outcomes if outcome.status == "no_match")
     errors = sum(1 for outcome in outcomes if outcome.status == "error")
 
@@ -374,6 +411,7 @@ def main() -> int:
     summary_parts.extend(
         [
             f"{skipped} skipped",
+            f"{already_processed} already processed",
             f"{no_match} unmatched",
         ]
     )
