@@ -68,9 +68,12 @@ TRANSCRIPT_RELEVANCE_SYSTEM_PROMPT = """You decide whether a MeetGeek meeting be
 You are given the deal's company name (if any) and human names extracted from deal documents.
 
 Return valid JSON only with this exact shape:
-{"relevant": true, "reason": "short explanation"}
+{"relevant": true, "reason": "explanation of why the meeting is relevant referring to the identity evidence and conversation nature"}
 
-A meeting is relevant ONLY if the company name and/or one of the human names appears in the meeting title, attendee names, participant emails, host email, or transcript text.
+A meeting is relevant ONLY if BOTH of the following are true:
+
+1. Identity evidence: the company name and/or one of the human names appears in the meeting title, attendee names, participant emails, host email, or transcript text.
+2. Conversation nature: the transcript excerpt shows a deal-assessment discussion — Antler or investor-side people asking diligence-style questions (market, product, traction, team, fundraising, GTM, etc.) and founders or startup-side people answering about their business.
 
 Hard rules:
 - These Antler team members appear on ALL deals and must NEVER determine relevance:
@@ -78,10 +81,14 @@ Hard rules:
 - Do NOT match similar-sounding or partially similar names (e.g. Chen is not Chan)
 - Do NOT infer company matches from email domains or substrings
 - Do NOT mark relevant based on shared generic topics alone
+- A lone name or single-word match with no supporting deal-assessment conversation context is NOT enough; set relevant=false
+- If the meeting discusses a different company or topic and a deal name appears only coincidentally, set relevant=false
+- Casual mentions, social catch-ups, or unrelated work meetings are NOT relevant even if a name appears
 - If no company name or human name from the deal identity appears in the meeting, set relevant=false
+- If conversation context is missing or thin (empty excerpt, greetings only) and identity evidence is weak, set relevant=false
 - When evidence is ambiguous, set relevant=false
 
-reason must be one concise sentence. If relevant=true, name the matching company or person and where it appears in the meeting.
+reason must be one concise sentence. If relevant=true, name the matching company or person and where it appears, and briefly note why the conversation fits a deal assessment.
 """
 
 
@@ -524,10 +531,6 @@ def find_matching_deal(
     api_key: str,
     model: str,
 ) -> MatchResult:
-    programmatic = find_programmatic_deal_match(meeting, sentences, targets)
-    if programmatic is not None:
-        return programmatic
-
     matches: list[tuple[str, str]] = []
     for target in targets:
         relevance = classify_relevance(
