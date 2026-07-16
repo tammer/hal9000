@@ -50,6 +50,16 @@ def print_banner(step: int, total: int, title: str) -> None:
     print()
 
 
+def confirm_step(title: str) -> bool:
+    while True:
+        answer = input(f"Run step: {title}? [y/n] ").strip().lower()
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("n", "no"):
+            return False
+        print("Please enter y or n.")
+
+
 def run_script(script_name: str, *args: str) -> subprocess.CompletedProcess[str]:
     script_path = REPO_ROOT / script_name
     cmd = [sys.executable, str(script_path), *args]
@@ -182,6 +192,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--skip-website", action="store_true", help="Skip step 5.")
     parser.add_argument("--skip-deploy", action="store_true", help="Skip step 6.")
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Ask yes/no before running each step.",
+    )
     return parser.parse_args()
 
 
@@ -203,37 +218,43 @@ def main() -> int:
 
     # Step 1: Fetch transcripts
     if not args.skip_fetch:
-        print_banner(1, total_steps, "Fetch transcripts")
-        fetch_args: list[str] = []
-        if args.cutoff_date:
-            fetch_args.extend(["--cutoff-date", args.cutoff_date])
-        if args.dry_run:
-            fetch_args.append("--dry-run")
+        if args.confirm and not confirm_step("Fetch transcripts"):
+            print("Skipping fetch (declined)", file=sys.stderr)
+        else:
+            print_banner(1, total_steps, "Fetch transcripts")
+            fetch_args: list[str] = []
+            if args.cutoff_date:
+                fetch_args.extend(["--cutoff-date", args.cutoff_date])
+            if args.dry_run:
+                fetch_args.append("--dry-run")
 
-        completed = run_script("fetch_all_transcripts.py", *fetch_args)
-        if completed.returncode != 0:
-            results.fetch = "FAILED"
-            results.failed_steps.append("fetch")
-            print_pipeline_summary(results)
-            return completed.returncode
-        results.fetch = "OK"
+            completed = run_script("fetch_all_transcripts.py", *fetch_args)
+            if completed.returncode != 0:
+                results.fetch = "FAILED"
+                results.failed_steps.append("fetch")
+                print_pipeline_summary(results)
+                return completed.returncode
+            results.fetch = "OK"
     else:
         print("Skipping fetch (--skip-fetch)", file=sys.stderr)
 
     # Step 2: Process emails
     if not args.skip_emails:
-        print_banner(2, total_steps, "Process emails")
-        email_args: list[str] = []
-        if args.dry_run:
-            email_args.append("--dry-run")
+        if args.confirm and not confirm_step("Process emails"):
+            print("Skipping emails (declined)", file=sys.stderr)
+        else:
+            print_banner(2, total_steps, "Process emails")
+            email_args: list[str] = []
+            if args.dry_run:
+                email_args.append("--dry-run")
 
-        completed = run_script("process_emails.py", *email_args)
-        if completed.returncode != 0:
-            results.emails = "FAILED"
-            results.failed_steps.append("emails")
-            print_pipeline_summary(results)
-            return completed.returncode
-        results.emails = "OK"
+            completed = run_script("process_emails.py", *email_args)
+            if completed.returncode != 0:
+                results.emails = "FAILED"
+                results.failed_steps.append("emails")
+                print_pipeline_summary(results)
+                return completed.returncode
+            results.emails = "OK"
     else:
         print("Skipping emails (--skip-emails)", file=sys.stderr)
 
@@ -241,55 +262,70 @@ def main() -> int:
 
     # Pre-Claude folder scan
     if not args.skip_claude:
-        print_banner(3, total_steps, "Claude summaries")
-        results.empty_folders, results.no_source_docs = scan_folder_issues(deal_folders)
-        print()
+        if args.confirm and not confirm_step("Claude summaries"):
+            print("Skipping Claude summaries (declined)", file=sys.stderr)
+        else:
+            print_banner(3, total_steps, "Claude summaries")
+            results.empty_folders, results.no_source_docs = scan_folder_issues(
+                deal_folders
+            )
+            print()
 
-        results.claude = run_claude_summaries(
-            deal_folders,
-            no_source_docs=set(results.no_source_docs) | set(results.empty_folders),
-        )
-        if results.claude.failed:
-            results.failed_steps.append("claude")
+            results.claude = run_claude_summaries(
+                deal_folders,
+                no_source_docs=set(results.no_source_docs)
+                | set(results.empty_folders),
+            )
+            if results.claude.failed:
+                results.failed_steps.append("claude")
     else:
         print("Skipping Claude summaries (--skip-claude)", file=sys.stderr)
 
     # Step 4: Summarizer
     if not args.skip_summarizer:
-        print_banner(4, total_steps, "Summarizer")
-        completed = run_script("summarizer.py")
-        if completed.returncode != 0:
-            results.summarizer = "FAILED"
-            results.failed_steps.append("summarizer")
-            print_pipeline_summary(results)
-            return completed.returncode
-        results.summarizer = "OK"
+        if args.confirm and not confirm_step("Summarizer"):
+            print("Skipping summarizer (declined)", file=sys.stderr)
+        else:
+            print_banner(4, total_steps, "Summarizer")
+            completed = run_script("summarizer.py")
+            if completed.returncode != 0:
+                results.summarizer = "FAILED"
+                results.failed_steps.append("summarizer")
+                print_pipeline_summary(results)
+                return completed.returncode
+            results.summarizer = "OK"
     else:
         print("Skipping summarizer (--skip-summarizer)", file=sys.stderr)
 
     # Step 5: Website
     if not args.skip_website:
-        print_banner(5, total_steps, "Website")
-        completed = run_script("generate_website.py")
-        if completed.returncode != 0:
-            results.website = "FAILED"
-            results.failed_steps.append("website")
-            print_pipeline_summary(results)
-            return completed.returncode
-        results.website = "OK"
+        if args.confirm and not confirm_step("Website"):
+            print("Skipping website (declined)", file=sys.stderr)
+        else:
+            print_banner(5, total_steps, "Website")
+            completed = run_script("generate_website.py")
+            if completed.returncode != 0:
+                results.website = "FAILED"
+                results.failed_steps.append("website")
+                print_pipeline_summary(results)
+                return completed.returncode
+            results.website = "OK"
     else:
         print("Skipping website (--skip-website)", file=sys.stderr)
 
     # Step 6: Deploy website
     if not args.skip_deploy:
-        print_banner(6, total_steps, "Deploy website")
-        completed = run_script("website_deploy.py")
-        if completed.returncode != 0:
-            results.deploy = "FAILED"
-            results.failed_steps.append("deploy")
-            print_pipeline_summary(results)
-            return completed.returncode
-        results.deploy = "OK"
+        if args.confirm and not confirm_step("Deploy website"):
+            print("Skipping deploy (declined)", file=sys.stderr)
+        else:
+            print_banner(6, total_steps, "Deploy website")
+            completed = run_script("website_deploy.py")
+            if completed.returncode != 0:
+                results.deploy = "FAILED"
+                results.failed_steps.append("deploy")
+                print_pipeline_summary(results)
+                return completed.returncode
+            results.deploy = "OK"
     else:
         print("Skipping deploy (--skip-deploy)", file=sys.stderr)
 

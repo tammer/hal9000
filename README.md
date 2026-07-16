@@ -91,6 +91,7 @@ python run_pipeline.py [options]
 | `--skip-claude` | Skip step 3 |
 | `--skip-summarizer` | Skip step 4 |
 | `--skip-website` | Skip step 5 |
+| `--confirm` | Ask yes/no before running each step |
 
 **Examples:**
 

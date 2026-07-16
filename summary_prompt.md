@@ -10,15 +10,15 @@ Produce a concise investment report.  Leave unknown fields blank rather than gue
 
 Output the following information in this form:
 
-## Last Documented Meeting
-
-- Date of Last Interaction: date in the form Mmm-dd, yyyy and who was there. e.g. "July 12, 2026 meeting with Tammer ahd Alex"
-- What actions or next steps were discussed at that meeting. Be concise.
-
 ## State
 
 Based on all known information, what's the state of things with this deal. Do your best to figure this out, but make sure you are clear if you are making assumptions or inferences.
 Be very concise in this section. 25 - 40 words max.
+
+## Last Documented Meeting
+
+- Date of Last Interaction: date in the form Mmm-dd, yyyy and who was there. e.g. "July 12, 2026 meeting with Tammer ahd Alex"
+- What actions or next steps were discussed at that meeting. Be concise.
 
 # Company
 
