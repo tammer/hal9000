@@ -3,3 +3,5 @@ groq
 python-dotenv
 markdown
 pypdf
+google-api-python-client
+google-auth

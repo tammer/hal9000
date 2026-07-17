@@ -222,3 +222,7 @@ __marimo__/
 
 # Local MeetGeek processing state
 processed_meetgeek_meetings.txt
+
+# Google service account keys (local only)
+service_account.json
+*-credentials.json
