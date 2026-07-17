@@ -30,6 +30,7 @@ from fetch_transcripts import (
 )
 
 EMAIL_FILENAME_PREFIX = "email_"
+EMAILS_DIR_NAME = "emails"
 
 EMAIL_DEAL_MATCH_SYSTEM_PROMPT = """You decide which single startup deal folder an email belongs to.
 
@@ -157,6 +158,14 @@ def email_basename(message: EmailMessage) -> str:
     return f"{EMAIL_FILENAME_PREFIX}{timestamp}_{sanitize_subject_for_filename(subject)}"
 
 
+def emails_dir(folder: Path) -> Path:
+    return folder / EMAILS_DIR_NAME
+
+
+def email_relative_path(filename: str) -> str:
+    return f"{EMAILS_DIR_NAME}/{filename}"
+
+
 def format_email_text(message: EmailMessage) -> str:
     body = extract_plain_text(message)
     lines = [
@@ -176,8 +185,12 @@ def find_existing_email(folder: Path, message_id: str) -> Path | None:
     if not message_id:
         return None
 
+    target = emails_dir(folder)
+    if not target.is_dir():
+        return None
+
     needle = message_id.strip()
-    for entry in folder.iterdir():
+    for entry in target.iterdir():
         if not entry.is_file() or not entry.name.startswith(EMAIL_FILENAME_PREFIX):
             continue
         text = entry.read_text(encoding="utf-8", errors="replace")
@@ -310,11 +323,12 @@ def process_message(
             subject=subject,
             sender=sender,
             deal_folder=deal.folder_name,
-            filename=existing.name,
-            reason="Email already present in deal folder.",
+            filename=email_relative_path(existing.name),
+            reason="Email already present in emails folder.",
         )
 
     filename = f"{email_basename(message)}.txt"
+    relative_filename = email_relative_path(filename)
     if dry_run:
         return MessageOutcome(
             status="would_write",
@@ -322,11 +336,13 @@ def process_message(
             subject=subject,
             sender=sender,
             deal_folder=deal.folder_name,
-            filename=filename,
+            filename=relative_filename,
             reason=match.reason,
         )
 
-    output_path = deal.folder / filename
+    output_dir = emails_dir(deal.folder)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / filename
     output_path.write_text(format_email_text(message), encoding="utf-8")
     return MessageOutcome(
         status="written",
@@ -334,7 +350,7 @@ def process_message(
         subject=subject,
         sender=sender,
         deal_folder=deal.folder_name,
-        filename=filename,
+        filename=relative_filename,
         reason=match.reason,
     )
 
