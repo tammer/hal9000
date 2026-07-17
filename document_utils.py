@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 import string
+import sys
 from collections.abc import Collection
 from pathlib import Path
 
@@ -63,12 +65,44 @@ def extract_pdf_text(path: Path) -> str | None:
     return text or None
 
 
+def extract_gdoc_text(path: Path) -> str | None:
+    """Resolve a Drive ``.gdoc`` pointer file to Google Doc plain text."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(f"Warning: could not parse .gdoc {path}: {exc}", file=sys.stderr)
+        return None
+
+    if not isinstance(data, dict):
+        print(f"Warning: invalid .gdoc JSON object in {path}", file=sys.stderr)
+        return None
+
+    doc_id = data.get("doc_id")
+    if not isinstance(doc_id, str) or not doc_id.strip():
+        print(f"Warning: missing doc_id in .gdoc {path}", file=sys.stderr)
+        return None
+
+    try:
+        from google_docs import read_google_doc
+
+        return read_google_doc(doc_id.strip())
+    except Exception as exc:
+        print(
+            f"Warning: failed to fetch Google Doc {doc_id} from {path}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
 def read_file_as_text(path: Path) -> str | None:
     suffix = path.suffix.lower()
     if suffix == ".docx":
         return extract_docx_text(path)
     if suffix == ".pdf":
         return extract_pdf_text(path)
+    if suffix == ".gdoc":
+        return extract_gdoc_text(path)
 
     data = path.read_bytes()
     if is_likely_binary(data):
