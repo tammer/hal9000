@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import re
 import string
+from collections.abc import Collection
 from pathlib import Path
 
 
 BINARY_SAMPLE_SIZE = 8192
 PRINTABLE_THRESHOLD = 0.75
+
+# Directory names skipped during recursive document discovery.
+FORBIDDEN_DIR_NAMES = frozenset({"ai-generated"})
 
 
 def is_likely_binary(data: bytes) -> bool:
@@ -79,23 +83,69 @@ def read_file_as_text(path: Path) -> str | None:
     return data.decode("utf-8", errors="replace")
 
 
-def collect_documents(path: Path, recursive: bool = False) -> list[tuple[Path, str]]:
-    candidates: list[Path]
+def _is_skipped_file(path: Path) -> bool:
+    return path.name.startswith(".") or path.name.startswith("~$")
+
+
+def list_candidate_files(
+    path: Path,
+    *,
+    recursive: bool = False,
+    exclude_dirs: Collection[str] | None = None,
+) -> list[Path]:
+    """Return readable-looking source file paths under ``path``.
+
+    When ``recursive`` is True, descend into subdirectories, pruning any
+    directory whose name is in ``exclude_dirs`` (defaults to none).
+    """
+    excluded = frozenset(exclude_dirs or ())
+
     if path.is_file():
-        candidates = [path]
-    else:
-        iterator = path.rglob("*") if recursive else path.iterdir()
-        candidates = sorted(entry for entry in iterator if entry.is_file())
+        return [] if _is_skipped_file(path) else [path]
 
+    if not path.is_dir():
+        return []
+
+    candidates: list[Path] = []
+
+    if not recursive:
+        candidates = sorted(
+            entry
+            for entry in path.iterdir()
+            if entry.is_file() and not _is_skipped_file(entry)
+        )
+        return candidates
+
+    def walk(directory: Path) -> None:
+        try:
+            entries = sorted(directory.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            return
+
+        for entry in entries:
+            if entry.is_dir():
+                if entry.name in excluded:
+                    continue
+                walk(entry)
+            elif entry.is_file() and not _is_skipped_file(entry):
+                candidates.append(entry)
+
+    walk(path)
+    return candidates
+
+
+def collect_documents(
+    path: Path,
+    recursive: bool = False,
+    exclude_dirs: Collection[str] | None = None,
+) -> list[tuple[Path, str]]:
     documents: list[tuple[Path, str]] = []
-    for entry in candidates:
-        if entry.name.startswith(".") or entry.name.startswith("~$"):
-            continue
-
+    for entry in list_candidate_files(
+        path, recursive=recursive, exclude_dirs=exclude_dirs
+    ):
         text = read_file_as_text(entry)
         if text is None:
             continue
-
         documents.append((entry, text))
 
     return documents

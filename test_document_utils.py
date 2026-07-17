@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Tests for recursive document discovery with forbidden-dir pruning."""
+
+from __future__ import annotations
+
+import os
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+from claude_summary import existing_summary_if_current
+from claude_update import changed_documents
+from document_utils import (
+    FORBIDDEN_DIR_NAMES,
+    collect_documents,
+    list_candidate_files,
+)
+
+
+def _write(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _touch_older(path: Path, seconds_ago: float) -> None:
+    past = time.time() - seconds_ago
+    os.utime(path, (past, past))
+
+
+class RecursiveDocumentDiscoveryTests(unittest.TestCase):
+    def test_list_candidate_files_finds_nested_and_skips_forbidden(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            top = _write(root / "notes.md", "top")
+            nested = _write(root / "diligence" / "memo.md", "nested")
+            deep_forbidden = _write(
+                root / "diligence" / "ai-generated" / "summary.md", "skip"
+            )
+            root_forbidden = _write(root / "ai-generated" / "summary.md", "skip")
+            _write(root / ".hidden.md", "hidden")
+            _write(root / "~$temp.docx", "temp")
+
+            found = list_candidate_files(
+                root, recursive=True, exclude_dirs=FORBIDDEN_DIR_NAMES
+            )
+
+            self.assertEqual(set(found), {top, nested})
+            self.assertNotIn(deep_forbidden, found)
+            self.assertNotIn(root_forbidden, found)
+
+    def test_collect_documents_reads_nested_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root / "a.md", "alpha")
+            _write(root / "sub" / "b.md", "beta")
+            _write(root / "ai-generated" / "summary.md", "ignore me")
+
+            docs = collect_documents(
+                root, recursive=True, exclude_dirs=FORBIDDEN_DIR_NAMES
+            )
+            by_name = {path.name: text for path, text in docs}
+
+            self.assertEqual(by_name, {"a.md": "alpha", "b.md": "beta"})
+
+    def test_non_recursive_stays_top_level(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            top = _write(root / "a.md", "alpha")
+            _write(root / "sub" / "b.md", "beta")
+
+            found = list_candidate_files(root, recursive=False)
+            self.assertEqual(found, [top])
+
+    def test_existing_summary_if_current_detects_nested_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = _write(root / "diligence" / "memo.md", "old")
+            summary = _write(root / "ai-generated" / "summary.md", "report")
+
+            _touch_older(nested, 120)
+            _touch_older(summary, 60)
+            self.assertEqual(existing_summary_if_current(root), summary)
+
+            nested.write_text("new", encoding="utf-8")
+            self.assertIsNone(existing_summary_if_current(root))
+
+    def test_changed_documents_includes_nested_and_excludes_ai_generated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_doc = _write(root / "old.md", "old")
+            nested = _write(root / "sub" / "new.md", "new")
+            summary = _write(root / "ai-generated" / "summary.md", "report")
+            ai_extra = _write(root / "ai-generated" / "notes.md", "should skip")
+
+            _touch_older(old_doc, 120)
+            _touch_older(summary, 60)
+            # nested and ai_extra are newer than summary by default
+
+            changed = changed_documents(root, summary.stat().st_mtime)
+            changed_paths = {path for path, _ in changed}
+
+            self.assertEqual(changed_paths, {nested})
+            self.assertNotIn(ai_extra, changed_paths)
+            self.assertNotIn(old_doc, changed_paths)
+
+
+if __name__ == "__main__":
+    unittest.main()

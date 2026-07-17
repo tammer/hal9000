@@ -10,15 +10,23 @@ Produce a concise investment report.  Leave unknown fields blank rather than gue
 
 Output the following information in this form:
 
-## State
+## TODOs
 
-Based on all known information, what's the state of things with this deal. Do your best to figure this out, but make sure you are clear if you are making assumptions or inferences.
-Be very concise in this section. 25 - 40 words max.
+Note anything we have committed to doing either for the founder or for our own purposes.
 
 ## Last Documented Meeting
 
 - Date of Last Interaction: date in the form Mmm-dd, yyyy and who was there. e.g. "July 12, 2026 meeting with Tammer ahd Alex"
 - What actions or next steps were discussed at that meeting. Be concise.
+
+## State
+
+Based on all known information, what's the state of things with this deal. Do your best to figure this out, but make sure you are clear if you are making assumptions or inferences.
+Be very concise in this section. 25 - 40 words max.
+
+## Our Thinking
+
+Using notes made by members of the Antler team, not what we are thinking, what we are concerned about and generally how bullish we are. If there are any milestones or KPIs we think are important, note them.
 
 # Company
 
@@ -65,7 +73,7 @@ Example:
 
 # Meetings
 
-One `##` subheading per transcript, chronological (oldest → newest). Title with date when known (`## 2024-03-12`); otherwise a short descriptive title. If the URL of the meetgeek meeting is available, then make "Title" a link to the actual meeting.
+One `##` subheading per transcript, reverse chronological (newest → oldest). Title with date when known (`## 2024-03-12`); otherwise a short descriptive title. If the URL of the meetgeek meeting is available, then make "Title" a link to the actual meeting.
 
 AUnder each: **Attendees** (name + role/affiliation), **Discussion** (bullets: key topics and decisions only), **Next steps** (owner + action when clear). Omit fluff and repeated facts.
 

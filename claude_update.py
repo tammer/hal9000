@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
-import argparse
-import os
 import sys
 from pathlib import Path
 
-from anthropic import Anthropic
 from dotenv import load_dotenv
 
-from claude_summary import (
-    MAX_OUTPUT_TOKENS,
+from claude_common import (
     MODEL,
-    PAYLOAD_WARN_CHARS,
-    append_generated_timestamp,
     build_payload,
-    extract_response_text,
-    load_summary_prompt,
+    load_system_prompt,
+    parse_relative_path_args,
     print_usage_report,
-    resolve_folder_path,
-    strip_markdown_fences,
+    require_api_key,
+    run_claude,
+    validate_folder,
 )
-from document_utils import collect_documents
+from document_utils import FORBIDDEN_DIR_NAMES, collect_documents
 
 UPDATE_INSTRUCTION = (
     "Below is the current investment report followed by documents that were "
@@ -32,7 +27,9 @@ UPDATE_INSTRUCTION = (
 def changed_documents(
     folder: Path, summary_mtime: float
 ) -> list[tuple[Path, str]]:
-    documents = collect_documents(folder, recursive=False)
+    documents = collect_documents(
+        folder, recursive=True, exclude_dirs=FORBIDDEN_DIR_NAMES
+    )
     return [
         (path, content)
         for path, content in documents
@@ -40,76 +37,18 @@ def changed_documents(
     ]
 
 
-def generate_update(
-    system_prompt: str,
-    current_report: str,
-    documents: list[tuple[Path, str]],
-    api_key: str,
-    model: str,
-) -> tuple[str, object]:
-    client = Anthropic(api_key=api_key)
-    payload = build_payload(documents)
-
-    user_content = (
-        f"{UPDATE_INSTRUCTION}\n\n"
-        f"# Current report\n{current_report}\n\n"
-        f"# New or changed documents\n{payload}"
-    )
-
-    if len(user_content) > PAYLOAD_WARN_CHARS:
-        print(
-            f"Warning: update payload is large ({len(user_content):,} chars)",
-            file=sys.stderr,
-        )
-
-    response = client.messages.create(
-        model=model,
-        max_tokens=MAX_OUTPUT_TOKENS,
-        system=system_prompt,
-        messages=[
-            {
-                "role": "user",
-                "content": user_content,
-            }
-        ],
-    )
-
-    text = append_generated_timestamp(
-        strip_markdown_fences(extract_response_text(response))
-    )
-    return text, response
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Update an existing investment summary with documents changed "
-            "since it was generated, using Claude."
-        )
-    )
-    parser.add_argument(
-        "relative_path",
-        help="Relative path under Google Drive to the folder to update",
-    )
-    return parser.parse_args()
-
-
 def main() -> int:
     load_dotenv()
-    args = parse_args()
+    args = parse_relative_path_args(
+        (
+            "Update an existing investment summary with documents changed "
+            "since it was generated, using Claude."
+        ),
+        "Relative path under Google Drive to the folder to update",
+    )
 
-    try:
-        folder = resolve_folder_path(args.relative_path)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-    if not folder.exists():
-        print(f"Error: path does not exist: {folder}", file=sys.stderr)
-        return 1
-
-    if not folder.is_dir():
-        print(f"Error: path is not a directory: {folder}", file=sys.stderr)
+    folder = validate_folder(args.relative_path)
+    if folder is None:
         return 1
 
     summary_path = folder / "ai-generated" / "summary.md"
@@ -131,15 +70,12 @@ def main() -> int:
         )
         return 0
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("Error: ANTHROPIC_API_KEY is not set", file=sys.stderr)
+    api_key = require_api_key()
+    if api_key is None:
         return 1
 
-    try:
-        system_prompt = load_summary_prompt()
-    except FileNotFoundError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+    system_prompt = load_system_prompt()
+    if system_prompt is None:
         return 1
 
     try:
@@ -148,11 +84,16 @@ def main() -> int:
         print(f"Error: failed to read {summary_path}: {exc}", file=sys.stderr)
         return 1
 
+    user_content = (
+        f"{UPDATE_INSTRUCTION}\n\n"
+        f"# Current report\n{current_report}\n\n"
+        f"# New or changed documents\n{build_payload(documents)}"
+    )
+
     try:
-        updated_report, response = generate_update(
+        updated_report, response = run_claude(
             system_prompt,
-            current_report,
-            documents,
+            user_content,
             api_key,
             MODEL,
         )
