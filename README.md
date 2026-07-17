@@ -47,8 +47,9 @@ GOOGLE_DRIVE_BASE/
 ├── status.md                    # portfolio table (written by summarizer.py)
 ├── Mobi/
 │   ├── pitch-deck.pdf           # source documents (top-level files)
-│   ├── email-subject.txt        # emails saved by process_emails.py
 │   ├── contents.json            # optional file index (generate_contents.py)
+│   ├── emails/
+│   │   └── email_20260710_143000_Subject.txt  # emails saved by process_emails.py
 │   ├── transcripts/
 │   │   └── Meeting+Title_sentences_2026-07-10.txt  # MeetGeek transcripts
 │   └── ai-generated/
@@ -57,7 +58,7 @@ GOOGLE_DRIVE_BASE/
 └── ...
 ```
 
-Most scripts read **top-level files only** in each deal folder (not recursive). Supported formats include `.txt`, `.md`, `.pdf`, `.docx`, and other text-readable files. Claude summary scripts also read files under `transcripts/`.
+Most scripts read **top-level files only** in each deal folder (not recursive). Supported formats include `.txt`, `.md`, `.pdf`, `.docx`, and other text-readable files. Claude summary scripts also read files under `emails/` and `transcripts/`.
 
 Many commands take a `relative_path` argument: the path under `GOOGLE_DRIVE_BASE`. For a top-level deal folder, this is just the folder name (e.g. `Mobi`).
 
@@ -167,7 +168,7 @@ python process_emails.py [--dry-run]
 |------|-------------|
 | `--dry-run` | Report matches without writing files or marking messages read |
 
-**Output:** `{subject}.txt` files in the matched deal folder.
+**Output:** `email_<timestamp>_<subject>.txt` files in the matched deal's `emails/` folder.
 
 **Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE`, `MAIL_IMAP_HOST`, `MAIL_ADDRESS`, `MAIL_PASSWORD`
 
