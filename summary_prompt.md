@@ -79,4 +79,4 @@ AUnder each: **Attendees** (name + role/affiliation), **Discussion** (bullets: k
 
 # Emails
 
-Reproduce the any email threads provided in a human readable manner. include date/time stamps.
+Reproduce the any email threads provided in a human readable manner. include date/time stamps. put them in reverse chronological order.  (newest first)
