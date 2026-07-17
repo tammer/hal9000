@@ -48,15 +48,16 @@ GOOGLE_DRIVE_BASE/
 ├── Mobi/
 │   ├── pitch-deck.pdf           # source documents (top-level files)
 │   ├── email-subject.txt        # emails saved by process_emails.py
-│   ├── Meeting+Title_sentences_2026-07-10.txt  # MeetGeek transcripts
 │   ├── contents.json            # optional file index (generate_contents.py)
+│   ├── transcripts/
+│   │   └── Meeting+Title_sentences_2026-07-10.txt  # MeetGeek transcripts
 │   └── ai-generated/
 │       ├── summary.md           # Claude investment summary
 │       └── deal.html            # optional (main.py)
 └── ...
 ```
 
-Most scripts read **top-level files only** in each deal folder (not recursive). Supported formats include `.txt`, `.md`, `.pdf`, `.docx`, and other text-readable files.
+Most scripts read **top-level files only** in each deal folder (not recursive). Supported formats include `.txt`, `.md`, `.pdf`, `.docx`, and other text-readable files. Claude summary scripts also read files under `transcripts/`.
 
 Many commands take a `relative_path` argument: the path under `GOOGLE_DRIVE_BASE`. For a top-level deal folder, this is just the folder name (e.g. `Mobi`).
 
@@ -128,7 +129,7 @@ python fetch_all_transcripts.py [--cutoff-date DATE] [--dry-run]
 | `--cutoff-date DATE` | Include meetings on or after this date (`YYYY-MM-DD`). Default: 2 days ago |
 | `--dry-run` | Report actions without writing files |
 
-**Output:** transcript `.txt` files in the matched deal folder.
+**Output:** transcript `.txt` files in the matched deal's `transcripts/` folder.
 
 **Requires:** `GROQ_API_KEY`, `MEETGEEK_API_KEY`, `MEETGEEK_TEAM_ID`, `GOOGLE_DRIVE_BASE`
 
@@ -148,7 +149,7 @@ python fetch_transcripts.py <relative_path>
 python fetch_transcripts.py Mobi
 ```
 
-Uses deal documents to extract company/people identity, then scores each recent meeting for relevance. Writes matching transcripts as top-level `.txt` files in the deal folder.
+Uses deal documents to extract company/people identity, then scores each recent meeting for relevance. Writes matching transcripts as `.txt` files under the deal's `transcripts/` folder.
 
 **Requires:** `GROQ_API_KEY`, `MEETGEEK_API_KEY`, `GOOGLE_DRIVE_BASE`
 

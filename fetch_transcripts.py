@@ -30,6 +30,7 @@ TRANSCRIPT_EXCERPT_CHARS = 3_000
 MEETING_LINK_PREFIX = "https://app.meetgeek.ai/meeting/"
 
 TRANSCRIPT_FILENAME_MARKER = "_sentences_"
+TRANSCRIPTS_DIR_NAME = "transcripts"
 
 PROCESSED_MEETINGS_PATH = (
     Path(__file__).resolve().parent / "processed_meetgeek_meetings.txt"
@@ -203,6 +204,14 @@ def is_meetgeek_transcript(path: Path) -> bool:
     return path.suffix.lower() == ".txt" and TRANSCRIPT_FILENAME_MARKER in path.name
 
 
+def transcripts_dir(folder: Path) -> Path:
+    return folder / TRANSCRIPTS_DIR_NAME
+
+
+def transcript_relative_path(filename: str) -> str:
+    return f"{TRANSCRIPTS_DIR_NAME}/{filename}"
+
+
 def collect_deal_context(
     folder: Path,
     *,
@@ -330,14 +339,18 @@ def find_existing_transcript(
     basename: str,
     meeting_id: str,
 ) -> Path | None:
-    for entry in folder.iterdir():
+    target = transcripts_dir(folder)
+    if not target.is_dir():
+        return None
+
+    for entry in target.iterdir():
         if not entry.is_file():
             continue
         if entry.stem == basename:
             return entry
 
     needle = meeting_id.lower()
-    for entry in folder.iterdir():
+    for entry in target.iterdir():
         if not entry.is_file() or entry.name.startswith("."):
             continue
         if entry.suffix.lower() != ".txt":
@@ -627,8 +640,8 @@ def process_meeting(
             status="skipped",
             title=meeting.title,
             date_label=date_label,
-            filename=existing.name,
-            reason="Transcript already present in deal folder.",
+            filename=transcript_relative_path(existing.name),
+            reason="Transcript already present in transcripts folder.",
         )
 
     relevance = classify_relevance(
@@ -648,16 +661,19 @@ def process_meeting(
         )
 
     filename = f"{basename}.txt"
+    relative_filename = transcript_relative_path(filename)
     if dry_run:
         return MeetingOutcome(
             status="would_write",
             title=meeting.title,
             date_label=date_label,
-            filename=filename,
+            filename=relative_filename,
             reason=relevance.reason,
         )
 
-    output_path = folder / filename
+    output_dir = transcripts_dir(folder)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / filename
     output_path.write_text(
         format_transcript_text(meeting, sentences),
         encoding="utf-8",
@@ -666,7 +682,7 @@ def process_meeting(
         status="written",
         title=meeting.title,
         date_label=date_label,
-        filename=filename,
+        filename=relative_filename,
         reason=relevance.reason,
     )
 
@@ -708,7 +724,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Fetch recent MeetGeek transcripts and write relevant ones "
-            "into a deal folder."
+            "into a deal transcripts folder."
         )
     )
     parser.add_argument(

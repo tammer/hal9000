@@ -24,6 +24,8 @@ from fetch_transcripts import (
     meeting_date_label,
     should_record_processed,
     transcript_basename,
+    transcript_relative_path,
+    transcripts_dir,
 )
 from meetgeek_client import (
     MeetGeekError,
@@ -199,22 +201,25 @@ def process_meeting(
             title=meeting.title,
             date_label=date_label,
             deal_folder=deal.folder_name,
-            filename=existing.name,
-            reason="Transcript already present in deal folder.",
+            filename=transcript_relative_path(existing.name),
+            reason="Transcript already present in transcripts folder.",
         )
 
     filename = f"{basename}.txt"
+    relative_filename = transcript_relative_path(filename)
     if dry_run:
         return MeetingOutcome(
             status="would_write",
             title=meeting.title,
             date_label=date_label,
             deal_folder=deal.folder_name,
-            filename=filename,
+            filename=relative_filename,
             reason=match.reason,
         )
 
-    output_path = deal.folder / filename
+    output_dir = transcripts_dir(deal.folder)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / filename
     output_path.write_text(
         format_transcript_text(meeting, sentences),
         encoding="utf-8",
@@ -224,7 +229,7 @@ def process_meeting(
         title=meeting.title,
         date_label=date_label,
         deal_folder=deal.folder_name,
-        filename=filename,
+        filename=relative_filename,
         reason=match.reason,
     )
 
@@ -266,7 +271,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Fetch team MeetGeek transcripts since a cutoff date and write "
-            "each relevant one to its deal folder."
+            "each relevant one to its deal transcripts folder."
         )
     )
     parser.add_argument(
