@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Summarize all MeetGeek team meetings for a given UTC day via Groq."""
+"""Summarize MeetGeek team meetings for a UTC day via Groq.
+
+Import and call ``meeting_roundup()`` to get a JSON-serializable list of
+``{"meeting_id", "summary"}`` dicts. Run as a script to pretty-print that
+JSON to stdout.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +26,8 @@ from meetgeek_client import (
     get_transcript,
     list_team_meetings,
 )
+
+__all__ = ["meeting_roundup"]
 
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
@@ -138,11 +145,15 @@ def summarize_transcript(
     return (response.choices[0].message.content or "").strip()
 
 
-def build_roundup(day: date | str | None = None) -> list[dict[str, str]]:
-    """Return meeting summaries for a UTC day as a list of dicts.
+def meeting_roundup(day: date | str | None = None) -> list[dict[str, str]]:
+    """Return JSON-ready meeting summaries for a UTC day.
 
-    Each item is ``{"meeting_id": "...", "summary": "..."}``.
-    Progress messages go to stderr. Skipped/failed meetings are omitted.
+    Args:
+        day: ``YYYY-MM-DD`` string, a ``date``, or ``None`` for yesterday.
+
+    Returns:
+        A list of ``{"meeting_id": "...", "summary": "..."}`` dicts.
+        Progress goes to stderr; skipped/failed meetings are omitted.
     """
     load_dotenv()
 
@@ -226,8 +237,7 @@ def build_roundup(day: date | str | None = None) -> list[dict[str, str]]:
 
 
 def main() -> int:
-    load_dotenv()
-
+    """CLI entry point: call ``meeting_roundup`` and pretty-print JSON."""
     parser = argparse.ArgumentParser(
         description=(
             "Fetch all MeetGeek team meetings for a UTC day and print a "
@@ -243,7 +253,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        results = build_roundup(args.date)
+        results = meeting_roundup(args.date)
     except (ValueError, FileNotFoundError, OSError, MeetGeekError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
