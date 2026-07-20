@@ -20,6 +20,8 @@ Be very concise in this section. 25 - 40 words max.
 ## TODOs
 
 Note anything we have committed to doing either for the founder or for our own purposes.
+Only include this section if there are actual todos.
+Do not include this section if the deal is dead or closed.
 
 ## Last Documented Meeting
 
