@@ -125,10 +125,16 @@ def print_usage_report(model: str, usage) -> None:
 
 
 def parse_relative_path_args(
-    description: str, path_help: str
+    description: str, path_help: str, *, with_dry_run: bool = False
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("relative_path", help=path_help)
+    if with_dry_run:
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="List documents that would be summarized without calling the API",
+        )
     return parser.parse_args()
 
 

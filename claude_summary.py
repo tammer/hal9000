@@ -48,32 +48,34 @@ def write_summary(folder: Path, content: str) -> Path:
     return output_path
 
 
+def print_document_list(
+    folder: Path, documents: list[tuple[Path, str]]
+) -> None:
+    print(f"Documents ({len(documents)}):")
+    for path, _ in documents:
+        print(f"  {path.relative_to(folder)}")
+
+
 def main() -> int:
     load_dotenv()
     args = parse_relative_path_args(
         "Generate an investment summary from deal documents using Claude.",
         "Relative path under Google Drive to the folder to summarize",
+        with_dry_run=True,
     )
 
     folder = validate_folder(args.relative_path)
     if folder is None:
         return 1
 
-    current_summary = existing_summary_if_current(folder)
-    if current_summary is not None:
-        print(
-            "No new source documents since the last summary was generated. "
-            f"Existing summary: {current_summary}"
-        )
-        return 0
-
-    api_key = require_api_key()
-    if api_key is None:
-        return 1
-
-    system_prompt = load_system_prompt()
-    if system_prompt is None:
-        return 1
+    if not args.dry_run:
+        current_summary = existing_summary_if_current(folder)
+        if current_summary is not None:
+            print(
+                "No new source documents since the last summary was generated. "
+                f"Existing summary: {current_summary}"
+            )
+            return 0
 
     documents = collect_documents(
         folder, recursive=True, exclude_dirs=FORBIDDEN_DIR_NAMES
@@ -83,6 +85,18 @@ def main() -> int:
             f"Error: no readable documents found in {folder}",
             file=sys.stderr,
         )
+        return 1
+
+    print_document_list(folder, documents)
+    if args.dry_run:
+        return 0
+
+    api_key = require_api_key()
+    if api_key is None:
+        return 1
+
+    system_prompt = load_system_prompt()
+    if system_prompt is None:
         return 1
 
     user_content = f"Documents:\n{build_payload(documents)}"

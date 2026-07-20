@@ -178,21 +178,26 @@ python process_emails.py [--dry-run]
 
 ### `claude_summary.py`
 
-Generates an investment summary from a deal folder's top-level source documents using Claude.
+Generates an investment summary from a deal folder's source documents (recursively, excluding `ai-generated/`) using Claude.
 
 ```bash
-python claude_summary.py <relative_path>
+python claude_summary.py <relative_path> [--dry-run]
 ```
+
+| Flag | Meaning |
+|------|---------|
+| `--dry-run` | List documents that would be summarized without calling the API or writing output |
 
 **Example:**
 
 ```bash
 python claude_summary.py Mobi
+python claude_summary.py Mobi --dry-run
 ```
 
 **Output:** `ai-generated/summary.md` in the deal folder.
 
-Skips regeneration if no source files have changed since the last summary. Prints token usage and estimated cost to stderr.
+Before summarizing, prints the relative paths of all documents that will be sent to Claude. Skips regeneration if no source files have changed since the last summary. Prints token usage and estimated cost to stderr.
 
 **Requires:** `ANTHROPIC_API_KEY`, `GOOGLE_DRIVE_BASE`
 
