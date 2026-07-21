@@ -25,7 +25,7 @@ python run_pipeline.py
 |----------|-------------|-------------|
 | `GOOGLE_DRIVE_BASE` | Most scripts | Root directory containing one subfolder per deal |
 | `WEBSITE_BASE` | `generate_website.py` | Parent directory where `website/` output is written |
-| `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `main.py`, `get_facts` | Groq API key |
+| `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
 | `GROQ_MODEL` | Optional | Groq model (default: `llama-3.3-70b-versatile`) |
 | `ANTHROPIC_API_KEY` | `claude_summary.py`, `chat.py`, `researcher.py` | Anthropic API key |
 | `ANTHROPIC_MODEL` | Optional | Default Anthropic model for `chat.py` |
@@ -279,6 +279,44 @@ python generate_contents.py Mobi
 ```
 
 **Output:** `contents.json` in the deal folder.
+
+**Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE`
+
+---
+
+### `consolidator.py`
+
+Extracts dated Antler team notes from top-level files in a deal folder. One Groq call per file; skips saved emails (`email_*`) and MeetGeek transcripts (`*_sentences_*`). Only keeps internal team notes (not founder materials or raw transcripts).
+
+```bash
+python consolidator.py <relative_path>
+```
+
+**Example:**
+
+```bash
+python consolidator.py Mobi
+```
+
+**Output:** JSON printed to stdout:
+
+```json
+{
+  "files": ["tammer-notes.md", "notes_tk_Jul20.txt"],
+  "entries": [
+    {
+      "datetime": "2026-07-20 00:00:00",
+      "author": "Tammer",
+      "content": "note text",
+      "source": "notes_tk_Jul20.txt"
+    }
+  ]
+}
+```
+
+`entries` are sorted by `datetime`. Authors are one of `Tammer`, `Bernie`, `Shambhavi`, `Alex`, `Matt`, `Daphne`, or `unknown`. Dates come from the document or filename when available (month/day without a year assumes the current year); otherwise the file's last-modified time is used.
+
+Supported extensions: `.md`, `.txt`, `.docx`, `.gdoc`.
 
 **Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE`
 
