@@ -15,6 +15,7 @@ from claude_common import (
     run_claude,
     validate_folder,
 )
+from process_deal import process_deal
 
 DEAL_JSON_NAME = "deal.json"
 
@@ -107,6 +108,16 @@ def main() -> int:
     folder = validate_folder(args.relative_path)
     if folder is None:
         return 1
+
+    if not args.dry_run:
+        try:
+            process_deal(args.relative_path)
+        except (ValueError, FileNotFoundError, NotADirectoryError, OSError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"Error: process_deal failed: {exc}", file=sys.stderr)
+            return 1
 
     deal_path = deal_json_path(folder)
 
