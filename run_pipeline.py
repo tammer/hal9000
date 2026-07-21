@@ -89,7 +89,7 @@ def run_claude_summaries(
     no_source_docs: set[str],
 ) -> ClaudeResults:
     results = ClaudeResults()
-    script_path = REPO_ROOT / "claude_summary.py"
+    script_path = REPO_ROOT / "claude_summary2.py"
 
     for folder in deal_folders:
         name = folder.name
@@ -113,14 +113,14 @@ def run_claude_summaries(
 
         if completed.returncode == 0:
             output = (completed.stdout or "") + (completed.stderr or "")
-            if "No new source documents since the last summary" in output:
+            if "No new deal.json since the last summary" in output:
                 results.skipped_up_to_date.append(name)
             else:
                 results.ok.append(name)
             continue
 
         results.failed.append(name)
-        print(f"Error: claude_summary failed for {name}", file=sys.stderr)
+        print(f"Error: claude_summary2 failed for {name}", file=sys.stderr)
 
     return results
 
