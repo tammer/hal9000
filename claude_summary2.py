@@ -42,20 +42,33 @@ def write_summary(folder: Path, content: str) -> Path:
     return output_path
 
 
+def strip_claude_stats(entries: list) -> list:
+    """Return entries with claude_stats removed from each object."""
+    cleaned: list = []
+    for item in entries:
+        if isinstance(item, dict):
+            cleaned.append(
+                {key: value for key, value in item.items() if key != "claude_stats"}
+            )
+        else:
+            cleaned.append(item)
+    return cleaned
+
+
 def load_deal_json(deal_path: Path) -> tuple[str, list] | None:
-    """Read deal.json text and parsed entries. Returns None on failure."""
+    """Read deal.json, strip claude_stats, return payload text and entries."""
     if not deal_path.is_file():
         print(f"Error: deal.json not found at {deal_path}", file=sys.stderr)
         return None
 
     try:
-        text = deal_path.read_text(encoding="utf-8")
+        raw = deal_path.read_text(encoding="utf-8")
     except OSError as exc:
         print(f"Error: failed to read {deal_path}: {exc}", file=sys.stderr)
         return None
 
     try:
-        data = json.loads(text)
+        data = json.loads(raw)
     except json.JSONDecodeError as exc:
         print(f"Error: invalid JSON in {deal_path}: {exc}", file=sys.stderr)
         return None
@@ -67,7 +80,9 @@ def load_deal_json(deal_path: Path) -> tuple[str, list] | None:
         )
         return None
 
-    return text, data
+    entries = strip_claude_stats(data)
+    text = json.dumps(entries, indent=2, ensure_ascii=False)
+    return text, entries
 
 
 def print_deal_list(folder: Path, deal_path: Path, entries: list) -> None:
