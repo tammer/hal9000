@@ -2,7 +2,8 @@
 """Infer per-deal daily activity from ai-generated/deal.json via Groq.
 
 Import and call ``generate_daily_summary(day)`` to get a JSON-serializable list of
-``{"deal", "summary"}`` dicts. Run as a script to pretty-print that JSON to stdout.
+``{"deal", "summary"}`` dicts. Run as a script to write that JSON under
+``GOOGLE_DRIVE_BASE/ai-generated/dailies/YYYY-MM-DD.json``.
 """
 
 from __future__ import annotations
@@ -224,11 +225,12 @@ def generate_daily_summary(day: date | str) -> list[dict[str, str]]:
 
 
 def main() -> int:
-    """CLI entry point: call ``generate_daily_summary`` and pretty-print JSON."""
+    """CLI entry point: write daily summary JSON under ai-generated/dailies/."""
     parser = argparse.ArgumentParser(
         description=(
             "For each deal, filter ai-generated/deal.json to a calendar day "
-            "and print a JSON list of {deal, summary} objects to stdout."
+            "and write {deal, summary} JSON to "
+            "GOOGLE_DRIVE_BASE/ai-generated/dailies/YYYY-MM-DD.json."
         )
     )
     parser.add_argument(
@@ -240,13 +242,20 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        day = args.date if args.date is not None else default_date()
+        day = parse_day(args.date) if args.date is not None else default_date()
         results = generate_daily_summary(day)
+        output_dir = resolve_google_drive_base() / "ai-generated" / "dailies"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{day.isoformat()}.json"
+        output_path.write_text(
+            json.dumps(results, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
     except (ValueError, FileNotFoundError, NotADirectoryError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    print(json.dumps(results, indent=2, ensure_ascii=False))
+    print(f"Wrote {output_path}", file=sys.stderr)
     return 0
 
 

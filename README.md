@@ -236,7 +236,7 @@ python daily_summary.py
 python daily_summary.py 2026-07-17
 ```
 
-**Output:** JSON list printed to stdout:
+**Output:** writes `GOOGLE_DRIVE_BASE/ai-generated/dailies/YYYY-MM-DD.json`:
 
 ```json
 [
@@ -247,7 +247,7 @@ python daily_summary.py 2026-07-17
 ]
 ```
 
-Importable as `generate_daily_summary(day)` (accepts a `date` or `YYYY-MM-DD` string). Progress and per-deal errors go to stderr.
+Creates `ai-generated/dailies/` if needed. Importable as `generate_daily_summary(day)` (accepts a `date` or `YYYY-MM-DD` string; returns the list). Progress and the written path go to stderr.
 
 **Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE` (and existing `ai-generated/deal.json` files from `process_deal.py`)
 

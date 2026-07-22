@@ -143,7 +143,8 @@ def main() -> int:
             )
 
     rows.sort(key=lambda row: row.deal_name.lower())
-    output_path = base / "status.md"
+    output_path = base / "ai-generated" / "status.md"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_status_table(rows), encoding="utf-8")
     print(f"Wrote {output_path} ({len(rows)} deals)", file=sys.stderr)
     return 0
