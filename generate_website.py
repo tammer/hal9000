@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -252,7 +253,8 @@ def render_daily_summaries_html(
         match = DAILY_JSON_RE.match(path.name)
         if not match:
             continue
-        day_label = match.group(1)
+        day = date.fromisoformat(match.group(1))
+        day_label = f"{day.strftime('%A, %B')} {day.day}"
 
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
