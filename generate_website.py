@@ -18,6 +18,8 @@ from html_utils import load_styles, markdown_to_html
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|\s*$")
 DAILY_JSON_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
+MEETGEEK_MET_RE = re.compile(r"^(.*?)\bmet\b", re.IGNORECASE)
+MEETGEEK_MEETING_URL = "https://app.meetgeek.ai/meeting/{meeting_id}"
 
 
 def resolve_google_drive_base() -> Path:
@@ -293,15 +295,38 @@ def render_deals_section(
     return "<h2>Deals</h2>\n" + "\n".join(parts)
 
 
+def link_meetgeek_summary(summary: str, meeting_id: str) -> str:
+    """Link the opening through the first 'met' to the MeetGeek meeting page."""
+    href = html.escape(
+        MEETGEEK_MEETING_URL.format(meeting_id=meeting_id),
+        quote=True,
+    )
+    match = MEETGEEK_MET_RE.match(summary)
+    if not match:
+        return html.escape(summary)
+    linked = summary[: match.end()]
+    rest = summary[match.end() :]
+    return (
+        f'<a href="{href}" target="_blank" rel="noopener noreferrer">'
+        f"{html.escape(linked)}</a>"
+        f"{html.escape(rest)}"
+    )
+
+
 def render_meetgeeks_section(items: list[Any]) -> str | None:
     lis: list[str] = []
     for item in items:
         if not isinstance(item, dict):
             continue
         summary = item.get("summary")
+        meeting_id = item.get("meeting_id")
         if not isinstance(summary, str) or not summary.strip():
             continue
-        lis.append(f"<li>{html.escape(summary)}</li>")
+        if isinstance(meeting_id, str) and meeting_id.strip():
+            summary_html = link_meetgeek_summary(summary, meeting_id.strip())
+        else:
+            summary_html = html.escape(summary)
+        lis.append(f"<li>{summary_html}</li>")
 
     if not lis:
         return None
