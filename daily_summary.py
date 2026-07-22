@@ -3,7 +3,7 @@
 
 Import and call ``generate_daily_summary(day)`` to get a JSON-serializable list of
 ``{"deal", "summary"}`` dicts. Run as a script to write that JSON under
-``GOOGLE_DRIVE_BASE/ai-generated/dailies/YYYY-MM-DD.json``.
+``GOOGLE_DRIVE_BASE/ai-generated/dailies/deals/YYYY-MM-DD.json``.
 """
 
 from __future__ import annotations
@@ -225,12 +225,12 @@ def generate_daily_summary(day: date | str) -> list[dict[str, str]]:
 
 
 def main() -> int:
-    """CLI entry point: write daily summary JSON under ai-generated/dailies/."""
+    """CLI entry point: write daily summary JSON under ai-generated/dailies/deals/."""
     parser = argparse.ArgumentParser(
         description=(
             "For each deal, filter ai-generated/deal.json to a calendar day "
             "and write {deal, summary} JSON to "
-            "GOOGLE_DRIVE_BASE/ai-generated/dailies/YYYY-MM-DD.json."
+            "GOOGLE_DRIVE_BASE/ai-generated/dailies/deals/YYYY-MM-DD.json."
         )
     )
     parser.add_argument(
@@ -244,7 +244,7 @@ def main() -> int:
     try:
         day = parse_day(args.date) if args.date is not None else default_date()
         results = generate_daily_summary(day)
-        output_dir = resolve_google_drive_base() / "ai-generated" / "dailies"
+        output_dir = resolve_google_drive_base() / "ai-generated" / "dailies" / "deals"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{day.isoformat()}.json"
         output_path.write_text(

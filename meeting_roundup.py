@@ -2,8 +2,8 @@
 """Summarize MeetGeek team meetings for a UTC day via Groq.
 
 Import and call ``meeting_roundup()`` to get a JSON-serializable list of
-``{"meeting_id", "summary"}`` dicts. Run as a script to pretty-print that
-JSON to stdout.
+``{"meeting_id", "summary"}`` dicts. Run as a script to write that JSON under
+``GOOGLE_DRIVE_BASE/ai-generated/dailies/meetgeeks/YYYY-MM-DD.json``.
 """
 
 from __future__ import annotations
@@ -62,11 +62,15 @@ and Alex would work on the investment memo for Trails.com
 """
 
 
-def load_facts_md() -> str:
+def resolve_google_drive_base() -> Path:
     base_raw = os.getenv("GOOGLE_DRIVE_BASE")
     if not base_raw:
         raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    facts_path = Path(base_raw).expanduser().resolve().parent / "facts.md"
+    return Path(base_raw).expanduser().resolve()
+
+
+def load_facts_md() -> str:
+    facts_path = resolve_google_drive_base().parent / "facts.md"
     if not facts_path.is_file():
         raise FileNotFoundError(f"facts.md not found at {facts_path}")
     return facts_path.read_text(encoding="utf-8").strip()
@@ -237,11 +241,12 @@ def meeting_roundup(day: date | str | None = None) -> list[dict[str, str]]:
 
 
 def main() -> int:
-    """CLI entry point: call ``meeting_roundup`` and pretty-print JSON."""
+    """CLI entry point: write meeting roundup JSON under ai-generated/dailies/meetgeeks/."""
     parser = argparse.ArgumentParser(
         description=(
-            "Fetch all MeetGeek team meetings for a UTC day and print a "
-            "JSON list of {meeting_id, summary} objects to stdout."
+            "Fetch all MeetGeek team meetings for a UTC day and write "
+            "{meeting_id, summary} JSON to "
+            "GOOGLE_DRIVE_BASE/ai-generated/dailies/meetgeeks/YYYY-MM-DD.json."
         )
     )
     parser.add_argument(
@@ -253,13 +258,24 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        results = meeting_roundup(args.date)
+        day = parse_day(args.date) if args.date is not None else default_date()
+        results = meeting_roundup(day)
+        output_dir = (
+            resolve_google_drive_base() / "ai-generated" / "dailies" / "meetgeeks"
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{day.isoformat()}.json"
+        output_path.write_text(
+            json.dumps(results, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
     except (ValueError, FileNotFoundError, OSError, MeetGeekError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    print(json.dumps(results, indent=2, ensure_ascii=False))
+    print(f"Wrote {output_path}", file=sys.stderr)
     return 0
+
 
 
 if __name__ == "__main__":

@@ -296,7 +296,7 @@ def generate_dailys_page(
     website_dir: Path,
     linked_deal_names: set[str],
 ) -> None:
-    dailies_dir = base / "ai-generated" / "dailies"
+    dailies_dir = base / "ai-generated" / "dailies" / "deals"
     daily_files = list_recent_daily_files(dailies_dir, limit=5)
     body_html = render_daily_summaries_html(daily_files, linked_deal_names)
     document_html = build_website_page(
