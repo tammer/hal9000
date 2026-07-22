@@ -180,7 +180,10 @@ def generate_deal_pages(
             continue
 
         summary_text = summary_path.read_text(encoding="utf-8")
-        body_html = markdown_to_html(summary_text, demote_h1=False)
+        body_html = (
+            f"<h1>{html.escape(deal_folder.name)}</h1>\n"
+            + markdown_to_html(summary_text, demote_h1=False)
+        )
         document_html = build_website_page(
             deal_folder.name,
             body_html,
