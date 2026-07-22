@@ -81,7 +81,12 @@ def build_system_prompt(facts_text: str) -> str:
 
 
 def default_date() -> date:
-    return date.today() - timedelta(days=1)
+    """Yesterday before 16:30 local time; today at or after 16:30."""
+    now = datetime.now()
+    cutoff = now.replace(hour=16, minute=30, second=0, microsecond=0)
+    if now >= cutoff:
+        return now.date()
+    return now.date() - timedelta(days=1)
 
 
 def parse_day(value: str) -> date:
@@ -153,7 +158,8 @@ def meeting_roundup(day: date | str | None = None) -> list[dict[str, str]]:
     """Return JSON-ready meeting summaries for a UTC day.
 
     Args:
-        day: ``YYYY-MM-DD`` string, a ``date``, or ``None`` for yesterday.
+        day: ``YYYY-MM-DD`` string, a ``date``, or ``None`` for the
+            default day (yesterday before 16:30 local, otherwise today).
 
     Returns:
         A list of ``{"meeting_id": "...", "summary": "..."}`` dicts.
@@ -253,7 +259,10 @@ def main() -> int:
         "date",
         nargs="?",
         default=None,
-        help="UTC calendar day as YYYY-MM-DD (default: yesterday)",
+        help=(
+            "UTC calendar day as YYYY-MM-DD "
+            "(default: yesterday before 16:30 local, otherwise today)"
+        ),
     )
     args = parser.parse_args()
 

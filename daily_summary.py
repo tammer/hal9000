@@ -28,7 +28,12 @@ DEAL_JSON_NAME = "deal.json"
 
 
 def default_date() -> date:
-    return date.today() - timedelta(days=1)
+    """Yesterday before 16:30 local time; today at or after 16:30."""
+    now = datetime.now()
+    cutoff = now.replace(hour=16, minute=30, second=0, microsecond=0)
+    if now >= cutoff:
+        return now.date()
+    return now.date() - timedelta(days=1)
 
 SUMMARY_INSTRUCTIONS = """You infer what happened with a venture capital deal on a given day.
 
@@ -238,7 +243,10 @@ def main() -> int:
         "date",
         nargs="?",
         default=None,
-        help="Calendar day as YYYY-MM-DD (default: yesterday)",
+        help=(
+            "Calendar day as YYYY-MM-DD "
+            "(default: yesterday before 16:30 local, otherwise today)"
+        ),
     )
     args = parser.parse_args()
 
