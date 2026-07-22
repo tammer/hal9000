@@ -95,7 +95,11 @@ def load_deal_catalog(
     catalog: list[DealCatalogEntry] = []
 
     for entry in sorted(base.iterdir()):
-        if not entry.is_dir() or entry.name.startswith("."):
+        if (
+            not entry.is_dir()
+            or entry.name.startswith(".")
+            or entry.name == "ai-generated"
+        ):
             continue
         if not folder_has_any_files(entry):
             continue
