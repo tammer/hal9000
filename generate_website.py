@@ -237,7 +237,10 @@ def list_recent_daily_files(dailies_dir: Path, limit: int = 5) -> list[Path]:
     return [path for _, path in dated[:limit]]
 
 
-def render_daily_summaries_html(daily_files: list[Path]) -> str:
+def render_daily_summaries_html(
+    daily_files: list[Path],
+    linked_deal_names: set[str],
+) -> str:
     if not daily_files:
         return "<p>No daily summaries yet.</p>"
 
@@ -266,7 +269,14 @@ def render_daily_summaries_html(daily_files: list[Path]) -> str:
             summary = item.get("summary")
             if not isinstance(deal, str) or not isinstance(summary, str):
                 continue
-            parts.append(f"<h2>{html.escape(deal)}</h2>")
+            if deal in linked_deal_names:
+                deal_html = (
+                    f'<a href="{html.escape(deal, quote=True)}.html">'
+                    f"{html.escape(deal)}</a>"
+                )
+            else:
+                deal_html = html.escape(deal)
+            parts.append(f"<h2>{deal_html}</h2>")
             parts.append(f"<p>{html.escape(summary)}</p>")
 
         sections.append("\n".join(parts))
@@ -276,10 +286,14 @@ def render_daily_summaries_html(daily_files: list[Path]) -> str:
     return "\n".join(sections)
 
 
-def generate_dailys_page(base: Path, website_dir: Path) -> None:
+def generate_dailys_page(
+    base: Path,
+    website_dir: Path,
+    linked_deal_names: set[str],
+) -> None:
     dailies_dir = base / "ai-generated" / "dailies"
     daily_files = list_recent_daily_files(dailies_dir, limit=5)
-    body_html = render_daily_summaries_html(daily_files)
+    body_html = render_daily_summaries_html(daily_files, linked_deal_names)
     document_html = build_website_page(
         "Daily Summaries",
         body_html,
@@ -347,7 +361,7 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    generate_dailys_page(base, website_dir)
+    generate_dailys_page(base, website_dir, linked_deal_names)
     generate_index_page(website_dir)
 
     print(
