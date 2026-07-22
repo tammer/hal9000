@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import os
 import re
 import sys
@@ -14,6 +15,7 @@ from html_utils import load_styles, markdown_to_html
 
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|\s*$")
+DAILY_JSON_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
 
 
 def resolve_google_drive_base() -> Path:
@@ -21,7 +23,7 @@ def resolve_google_drive_base() -> Path:
     if not base_raw:
         raise ValueError(
             "GOOGLE_DRIVE_BASE is not set. "
-            "Set it to the root directory containing deal folders and status.md."
+            "Set it to the root directory containing deal folders and ai-generated/status.md."
         )
     return Path(base_raw).expanduser().resolve()
 
@@ -121,10 +123,22 @@ def link_deal_names_in_status_table(
     return "\n".join(output_lines) + ("\n" if markdown_text.endswith("\n") else "")
 
 
-def build_website_page(title: str, body_html: str, *, is_index: bool) -> str:
+def build_website_page(
+    title: str,
+    body_html: str,
+    *,
+    back_href: str | None = None,
+    back_label: str | None = None,
+) -> str:
     styles = load_styles()
     page_title = html.escape(title)
-    nav_html = "" if is_index else '    <a class="back-link" href="index.html">← All deals</a>\n'
+    if back_href and back_label:
+        nav_html = (
+            f'    <a class="back-link" href="{html.escape(back_href, quote=True)}">'
+            f"{html.escape(back_label)}</a>\n"
+        )
+    else:
+        nav_html = ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -168,7 +182,8 @@ def generate_deal_pages(
         document_html = build_website_page(
             deal_folder.name,
             body_html,
-            is_index=False,
+            back_href="deals.html",
+            back_label="← All deals",
         )
 
         output_path = website_dir / f"{deal_folder.name}.html"
@@ -180,12 +195,12 @@ def generate_deal_pages(
     return linked_deal_names, written
 
 
-def generate_index_page(
+def generate_deals_page(
     base: Path,
     website_dir: Path,
     linked_deal_names: set[str],
 ) -> None:
-    status_path = base / "status.md"
+    status_path = base / "ai-generated" / "status.md"
     if not status_path.is_file():
         raise FileNotFoundError(
             f"status.md not found at {status_path}. Run summarizer.py first."
@@ -194,7 +209,94 @@ def generate_index_page(
     status_text = status_path.read_text(encoding="utf-8")
     linked_status = link_deal_names_in_status_table(status_text, linked_deal_names)
     body_html = markdown_to_html(linked_status, demote_h1=False)
-    document_html = build_website_page("Deal Portfolio", body_html, is_index=True)
+    document_html = build_website_page(
+        "Deal Portfolio",
+        body_html,
+        back_href="index.html",
+        back_label="← Home",
+    )
+
+    output_path = website_dir / "deals.html"
+    output_path.write_text(document_html, encoding="utf-8")
+    print(f"Wrote {output_path.name}", file=sys.stderr)
+
+
+def list_recent_daily_files(dailies_dir: Path, limit: int = 5) -> list[Path]:
+    if not dailies_dir.is_dir():
+        return []
+
+    dated: list[tuple[str, Path]] = []
+    for path in dailies_dir.glob("*.json"):
+        match = DAILY_JSON_RE.match(path.name)
+        if match:
+            dated.append((match.group(1), path))
+
+    dated.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in dated[:limit]]
+
+
+def render_daily_summaries_html(daily_files: list[Path]) -> str:
+    if not daily_files:
+        return "<p>No daily summaries yet.</p>"
+
+    sections: list[str] = []
+    for path in daily_files:
+        match = DAILY_JSON_RE.match(path.name)
+        if not match:
+            continue
+        day_label = match.group(1)
+
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            print(f"Warning: could not load {path}: {exc}", file=sys.stderr)
+            continue
+
+        if not isinstance(raw, list):
+            print(f"Warning: {path} is not a JSON list; skipping", file=sys.stderr)
+            continue
+
+        parts = [f"<h1>{html.escape(day_label)}</h1>"]
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            deal = item.get("deal")
+            summary = item.get("summary")
+            if not isinstance(deal, str) or not isinstance(summary, str):
+                continue
+            parts.append(f"<h2>{html.escape(deal)}</h2>")
+            parts.append(f"<p>{html.escape(summary)}</p>")
+
+        sections.append("\n".join(parts))
+
+    if not sections:
+        return "<p>No daily summaries yet.</p>"
+    return "\n".join(sections)
+
+
+def generate_dailys_page(base: Path, website_dir: Path) -> None:
+    dailies_dir = base / "ai-generated" / "dailies"
+    daily_files = list_recent_daily_files(dailies_dir, limit=5)
+    body_html = render_daily_summaries_html(daily_files)
+    document_html = build_website_page(
+        "Daily Summaries",
+        body_html,
+        back_href="index.html",
+        back_label="← Home",
+    )
+
+    output_path = website_dir / "dailys.html"
+    output_path.write_text(document_html, encoding="utf-8")
+    print(f"Wrote {output_path.name}", file=sys.stderr)
+
+
+def generate_index_page(website_dir: Path) -> None:
+    body_html = """<h1>Deal Hub</h1>
+<ul>
+  <li><a href="deals.html">Deals</a></li>
+  <li><a href="dailys.html">Daily summaries</a></li>
+</ul>"""
+    document_html = build_website_page("Deal Hub", body_html)
 
     output_path = website_dir / "index.html"
     output_path.write_text(document_html, encoding="utf-8")
@@ -238,13 +340,17 @@ def main() -> int:
     linked_deal_names, deal_count = generate_deal_pages(deal_folders, website_dir)
 
     try:
-        generate_index_page(base, website_dir, linked_deal_names)
+        generate_deals_page(base, website_dir, linked_deal_names)
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
+    generate_dailys_page(base, website_dir)
+    generate_index_page(website_dir)
+
     print(
-        f"Done: wrote index.html and {deal_count} deal page(s) to {website_dir}",
+        f"Done: wrote index.html, deals.html, dailys.html, and {deal_count} "
+        f"deal page(s) to {website_dir}",
         file=sys.stderr,
     )
 
