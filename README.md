@@ -25,7 +25,7 @@ python run_pipeline.py
 |----------|-------------|-------------|
 | `GOOGLE_DRIVE_BASE` | Most scripts | Root directory containing one subfolder per deal |
 | `WEBSITE_BASE` | `generate_website.py` | Parent directory where `website/` output is written |
-| `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
+| `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `daily_summary.py`, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
 | `GROQ_MODEL` | Optional | Groq model (default: `llama-3.3-70b-versatile`) |
 | `ANTHROPIC_API_KEY` | `claude_summary.py`, `chat.py`, `researcher.py` | Anthropic API key |
 | `ANTHROPIC_MODEL` | Optional | Default Anthropic model for `chat.py` |
@@ -216,6 +216,40 @@ python summarizer.py
 Deals without a summary are skipped. Failures for individual deals are logged as warnings; the script still writes the table for successful extractions.
 
 **Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE`
+
+---
+
+### `daily_summary.py`
+
+For each deal folder under `GOOGLE_DRIVE_BASE`, reads `ai-generated/deal.json`, keeps only entries whose `created_at` calendar date matches the given day, and asks Groq to infer what happened with that deal. Deals with no matching entries are omitted.
+
+```bash
+python daily_summary.py [YYYY-MM-DD]
+```
+
+Date is optional; defaults to yesterday.
+
+**Example:**
+
+```bash
+python daily_summary.py
+python daily_summary.py 2026-07-17
+```
+
+**Output:** JSON list printed to stdout:
+
+```json
+[
+  {
+    "deal": "Endo",
+    "summary": "Today, Tammer and Alex met the team and talked about PMF"
+  }
+]
+```
+
+Importable as `generate_daily_summary(day)` (accepts a `date` or `YYYY-MM-DD` string). Progress and per-deal errors go to stderr.
+
+**Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE` (and existing `ai-generated/deal.json` files from `process_deal.py`)
 
 ---
 
