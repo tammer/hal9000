@@ -44,9 +44,10 @@ Rules:
 - Prefer concrete events: meetings held, emails sent, notes written, next steps.
 - If activity is thin, say so briefly based on what is present.
 - Output plain text only — no headings, bullets, or markdown.
+- There is no need to mention the date in the summary.
 
 Example:
-Today, Tammer and Alex met the team and talked about PMF. They concluded that more work is needed to get to PMF.
+Tammer and Alex met the team and talked about PMF. They concluded that more work is needed to get to PMF.
 """
 
 

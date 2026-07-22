@@ -27,6 +27,8 @@ class ClaudeResults:
 class PipelineResults:
     fetch: str | None = None
     emails: str | None = None
+    meeting_roundup: str | None = None
+    daily_summary: str | None = None
     claude: ClaudeResults = field(default_factory=ClaudeResults)
     empty_folders: list[str] = field(default_factory=list)
     no_source_docs: list[str] = field(default_factory=list)
@@ -144,6 +146,10 @@ def print_pipeline_summary(results: PipelineResults) -> None:
         print(f"  Fetch: {results.fetch}")
     if results.emails is not None:
         print(f"  Emails: {results.emails}")
+    if results.meeting_roundup is not None:
+        print(f"  Meeting roundup: {results.meeting_roundup}")
+    if results.daily_summary is not None:
+        print(f"  Daily summary: {results.daily_summary}")
     if (
         results.claude.ok
         or results.claude.skipped_up_to_date
@@ -169,7 +175,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run the full deal pipeline: fetch transcripts, process emails, "
-            "Claude summaries, status table, and website generation."
+            "meeting roundup, daily summary, Claude summaries, status table, "
+            "website generation, and deploy."
         )
     )
     parser.add_argument(
@@ -184,14 +191,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--skip-fetch", action="store_true", help="Skip step 1.")
     parser.add_argument("--skip-emails", action="store_true", help="Skip step 2.")
-    parser.add_argument("--skip-claude", action="store_true", help="Skip step 3.")
     parser.add_argument(
-        "--skip-summarizer",
+        "--skip-meeting-roundup",
+        action="store_true",
+        help="Skip step 3.",
+    )
+    parser.add_argument(
+        "--skip-daily-summary",
         action="store_true",
         help="Skip step 4.",
     )
-    parser.add_argument("--skip-website", action="store_true", help="Skip step 5.")
-    parser.add_argument("--skip-deploy", action="store_true", help="Skip step 6.")
+    parser.add_argument("--skip-claude", action="store_true", help="Skip step 5.")
+    parser.add_argument(
+        "--skip-summarizer",
+        action="store_true",
+        help="Skip step 6.",
+    )
+    parser.add_argument("--skip-website", action="store_true", help="Skip step 7.")
+    parser.add_argument("--skip-deploy", action="store_true", help="Skip step 8.")
     parser.add_argument(
         "--confirm",
         action="store_true",
@@ -204,7 +221,7 @@ def main() -> int:
     load_dotenv()
     args = parse_args()
     results = PipelineResults()
-    total_steps = 6
+    total_steps = 8
 
     try:
         base = deals_base()
@@ -258,14 +275,46 @@ def main() -> int:
     else:
         print("Skipping emails (--skip-emails)", file=sys.stderr)
 
+    # Step 3: Meeting roundup
+    if not args.skip_meeting_roundup:
+        if args.confirm and not confirm_step("Meeting roundup"):
+            print("Skipping meeting roundup (declined)", file=sys.stderr)
+        else:
+            print_banner(3, total_steps, "Meeting roundup")
+            completed = run_script("meeting_roundup.py")
+            if completed.returncode != 0:
+                results.meeting_roundup = "FAILED"
+                results.failed_steps.append("meeting_roundup")
+                print_pipeline_summary(results)
+                return completed.returncode
+            results.meeting_roundup = "OK"
+    else:
+        print("Skipping meeting roundup (--skip-meeting-roundup)", file=sys.stderr)
+
+    # Step 4: Daily summary
+    if not args.skip_daily_summary:
+        if args.confirm and not confirm_step("Daily summary"):
+            print("Skipping daily summary (declined)", file=sys.stderr)
+        else:
+            print_banner(4, total_steps, "Daily summary")
+            completed = run_script("daily_summary.py")
+            if completed.returncode != 0:
+                results.daily_summary = "FAILED"
+                results.failed_steps.append("daily_summary")
+                print_pipeline_summary(results)
+                return completed.returncode
+            results.daily_summary = "OK"
+    else:
+        print("Skipping daily summary (--skip-daily-summary)", file=sys.stderr)
+
     deal_folders = list_deal_folders(base)
 
-    # Pre-Claude folder scan
+    # Step 5: Claude summaries
     if not args.skip_claude:
         if args.confirm and not confirm_step("Claude summaries"):
             print("Skipping Claude summaries (declined)", file=sys.stderr)
         else:
-            print_banner(3, total_steps, "Claude summaries")
+            print_banner(5, total_steps, "Claude summaries")
             results.empty_folders, results.no_source_docs = scan_folder_issues(
                 deal_folders
             )
@@ -281,12 +330,12 @@ def main() -> int:
     else:
         print("Skipping Claude summaries (--skip-claude)", file=sys.stderr)
 
-    # Step 4: Summarizer
+    # Step 6: Summarizer
     if not args.skip_summarizer:
         if args.confirm and not confirm_step("Summarizer"):
             print("Skipping summarizer (declined)", file=sys.stderr)
         else:
-            print_banner(4, total_steps, "Summarizer")
+            print_banner(6, total_steps, "Summarizer")
             completed = run_script("summarizer.py")
             if completed.returncode != 0:
                 results.summarizer = "FAILED"
@@ -297,12 +346,12 @@ def main() -> int:
     else:
         print("Skipping summarizer (--skip-summarizer)", file=sys.stderr)
 
-    # Step 5: Website
+    # Step 7: Website
     if not args.skip_website:
         if args.confirm and not confirm_step("Website"):
             print("Skipping website (declined)", file=sys.stderr)
         else:
-            print_banner(5, total_steps, "Website")
+            print_banner(7, total_steps, "Website")
             completed = run_script("generate_website.py")
             if completed.returncode != 0:
                 results.website = "FAILED"
@@ -313,12 +362,12 @@ def main() -> int:
     else:
         print("Skipping website (--skip-website)", file=sys.stderr)
 
-    # Step 6: Deploy website
+    # Step 8: Deploy website
     if not args.skip_deploy:
         if args.confirm and not confirm_step("Deploy website"):
             print("Skipping deploy (declined)", file=sys.stderr)
         else:
-            print_banner(6, total_steps, "Deploy website")
+            print_banner(8, total_steps, "Deploy website")
             completed = run_script("website_deploy.py")
             if completed.returncode != 0:
                 results.deploy = "FAILED"
