@@ -9,6 +9,7 @@ import re
 import sys
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -227,64 +228,119 @@ def generate_deals_page(
     print(f"Wrote {output_path.name}", file=sys.stderr)
 
 
-def list_recent_daily_files(dailies_dir: Path, limit: int = 5) -> list[Path]:
+def dated_json_paths(dailies_dir: Path) -> dict[str, Path]:
+    """Map YYYY-MM-DD -> path for dated JSON files in a directory."""
     if not dailies_dir.is_dir():
-        return []
+        return {}
 
-    dated: list[tuple[str, Path]] = []
+    dated: dict[str, Path] = {}
     for path in dailies_dir.glob("*.json"):
         match = DAILY_JSON_RE.match(path.name)
         if match:
-            dated.append((match.group(1), path))
+            dated[match.group(1)] = path
+    return dated
 
-    dated.sort(key=lambda item: item[0], reverse=True)
-    return [path for _, path in dated[:limit]]
+
+def list_recent_daily_days(
+    deals_dir: Path,
+    meetgeeks_dir: Path,
+    limit: int = 5,
+) -> list[tuple[str, Path | None, Path | None]]:
+    """Return up to ``limit`` recent days with deal and/or meetgeek JSON paths."""
+    deals = dated_json_paths(deals_dir)
+    meetgeeks = dated_json_paths(meetgeeks_dir)
+    days = sorted(set(deals) | set(meetgeeks), reverse=True)[:limit]
+    return [(day, deals.get(day), meetgeeks.get(day)) for day in days]
+
+
+def load_json_list(path: Path) -> list[Any] | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(f"Warning: could not load {path}: {exc}", file=sys.stderr)
+        return None
+
+    if not isinstance(raw, list):
+        print(f"Warning: {path} is not a JSON list; skipping", file=sys.stderr)
+        return None
+    return raw
+
+
+def render_deals_section(
+    items: list[Any],
+    linked_deal_names: set[str],
+) -> str | None:
+    parts: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        deal = item.get("deal")
+        summary = item.get("summary")
+        if not isinstance(deal, str) or not isinstance(summary, str):
+            continue
+        if deal in linked_deal_names:
+            deal_html = (
+                f'<a href="{html.escape(deal, quote=True)}.html">'
+                f"{html.escape(deal)}</a>"
+            )
+        else:
+            deal_html = html.escape(deal)
+        parts.append(f"<h3>{deal_html}</h3>")
+        parts.append(f"<p>{html.escape(summary)}</p>")
+
+    if not parts:
+        return None
+    return "<h2>Deals</h2>\n" + "\n".join(parts)
+
+
+def render_meetgeeks_section(items: list[Any]) -> str | None:
+    lis: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        summary = item.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            continue
+        lis.append(f"<li>{html.escape(summary)}</li>")
+
+    if not lis:
+        return None
+    return "<h2>Meetgeeks</h2>\n<ul>\n" + "\n".join(lis) + "\n</ul>"
 
 
 def render_daily_summaries_html(
-    daily_files: list[Path],
+    days: list[tuple[str, Path | None, Path | None]],
     linked_deal_names: set[str],
 ) -> str:
-    if not daily_files:
+    if not days:
         return "<p>No daily summaries yet.</p>"
 
     sections: list[str] = []
-    for path in daily_files:
-        match = DAILY_JSON_RE.match(path.name)
-        if not match:
-            continue
-        day = date.fromisoformat(match.group(1))
+    for day_str, deals_path, meetgeeks_path in days:
+        day = date.fromisoformat(day_str)
         day_label = f"{day.strftime('%A, %B')} {day.day}"
 
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            print(f"Warning: could not load {path}: {exc}", file=sys.stderr)
-            continue
-
-        if not isinstance(raw, list):
-            print(f"Warning: {path} is not a JSON list; skipping", file=sys.stderr)
-            continue
-
         parts = [f"<h1>{html.escape(day_label)}</h1>"]
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            deal = item.get("deal")
-            summary = item.get("summary")
-            if not isinstance(deal, str) or not isinstance(summary, str):
-                continue
-            if deal in linked_deal_names:
-                deal_html = (
-                    f'<a href="{html.escape(deal, quote=True)}.html">'
-                    f"{html.escape(deal)}</a>"
-                )
-            else:
-                deal_html = html.escape(deal)
-            parts.append(f"<h2>{deal_html}</h2>")
-            parts.append(f"<p>{html.escape(summary)}</p>")
+        has_content = False
 
-        sections.append("\n".join(parts))
+        if deals_path is not None:
+            raw = load_json_list(deals_path)
+            if raw is not None:
+                deals_html = render_deals_section(raw, linked_deal_names)
+                if deals_html is not None:
+                    parts.append(deals_html)
+                    has_content = True
+
+        if meetgeeks_path is not None:
+            raw = load_json_list(meetgeeks_path)
+            if raw is not None:
+                meetgeeks_html = render_meetgeeks_section(raw)
+                if meetgeeks_html is not None:
+                    parts.append(meetgeeks_html)
+                    has_content = True
+
+        if has_content:
+            sections.append("\n".join(parts))
 
     if not sections:
         return "<p>No daily summaries yet.</p>"
@@ -296,9 +352,10 @@ def generate_dailys_page(
     website_dir: Path,
     linked_deal_names: set[str],
 ) -> None:
-    dailies_dir = base / "ai-generated" / "dailies" / "deals"
-    daily_files = list_recent_daily_files(dailies_dir, limit=5)
-    body_html = render_daily_summaries_html(daily_files, linked_deal_names)
+    deals_dir = base / "ai-generated" / "dailies" / "deals"
+    meetgeeks_dir = base / "ai-generated" / "dailies" / "meetgeeks"
+    days = list_recent_daily_days(deals_dir, meetgeeks_dir, limit=5)
+    body_html = render_daily_summaries_html(days, linked_deal_names)
     document_html = build_website_page(
         "Daily Summaries",
         body_html,
