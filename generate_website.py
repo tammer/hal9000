@@ -313,7 +313,7 @@ def generate_index_page(website_dir: Path) -> None:
     body_html = """<h1>Deal Hub</h1>
 <ul>
   <li><a href="deals.html">Deals</a></li>
-  <li><a href="dailys.html">Daily summaries</a></li>
+  <li><a href="dailys.html">Activity</a></li>
 </ul>"""
     document_html = build_website_page("Deal Hub", body_html)
 
