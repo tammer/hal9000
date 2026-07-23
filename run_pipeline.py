@@ -148,8 +148,6 @@ def print_pipeline_summary(results: PipelineResults) -> None:
         print(f"  Emails: {results.emails}")
     if results.meeting_roundup is not None:
         print(f"  Meeting roundup: {results.meeting_roundup}")
-    if results.daily_summary is not None:
-        print(f"  Daily summary: {results.daily_summary}")
     if (
         results.claude.ok
         or results.claude.skipped_up_to_date
@@ -157,6 +155,8 @@ def print_pipeline_summary(results: PipelineResults) -> None:
         or results.claude.failed
     ):
         print(f"  Claude: {format_claude_summary(results.claude)}")
+    if results.daily_summary is not None:
+        print(f"  Daily summary: {results.daily_summary}")
     if results.empty_folders:
         print(f"  Empty folders: {', '.join(results.empty_folders)}")
     if results.no_source_docs:
@@ -175,7 +175,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run the full deal pipeline: fetch transcripts, process emails, "
-            "meeting roundup, daily summary, Claude summaries, status table, "
+            "meeting roundup, Claude summaries, daily summary, status table, "
             "website generation, and deploy."
         )
     )
@@ -196,12 +196,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip step 3.",
     )
+    parser.add_argument("--skip-claude", action="store_true", help="Skip step 4.")
     parser.add_argument(
         "--skip-daily-summary",
         action="store_true",
-        help="Skip step 4.",
+        help="Skip step 5.",
     )
-    parser.add_argument("--skip-claude", action="store_true", help="Skip step 5.")
     parser.add_argument(
         "--skip-summarizer",
         action="store_true",
@@ -291,30 +291,14 @@ def main() -> int:
     else:
         print("Skipping meeting roundup (--skip-meeting-roundup)", file=sys.stderr)
 
-    # Step 4: Daily summary
-    if not args.skip_daily_summary:
-        if args.confirm and not confirm_step("Daily summary"):
-            print("Skipping daily summary (declined)", file=sys.stderr)
-        else:
-            print_banner(4, total_steps, "Daily summary")
-            completed = run_script("daily_summary.py")
-            if completed.returncode != 0:
-                results.daily_summary = "FAILED"
-                results.failed_steps.append("daily_summary")
-                print_pipeline_summary(results)
-                return completed.returncode
-            results.daily_summary = "OK"
-    else:
-        print("Skipping daily summary (--skip-daily-summary)", file=sys.stderr)
-
     deal_folders = list_deal_folders(base)
 
-    # Step 5: Claude summaries
+    # Step 4: Claude summaries
     if not args.skip_claude:
         if args.confirm and not confirm_step("Claude summaries"):
             print("Skipping Claude summaries (declined)", file=sys.stderr)
         else:
-            print_banner(5, total_steps, "Claude summaries")
+            print_banner(4, total_steps, "Claude summaries")
             results.empty_folders, results.no_source_docs = scan_folder_issues(
                 deal_folders
             )
@@ -329,6 +313,22 @@ def main() -> int:
                 results.failed_steps.append("claude")
     else:
         print("Skipping Claude summaries (--skip-claude)", file=sys.stderr)
+
+    # Step 5: Daily summary
+    if not args.skip_daily_summary:
+        if args.confirm and not confirm_step("Daily summary"):
+            print("Skipping daily summary (declined)", file=sys.stderr)
+        else:
+            print_banner(5, total_steps, "Daily summary")
+            completed = run_script("daily_summary.py")
+            if completed.returncode != 0:
+                results.daily_summary = "FAILED"
+                results.failed_steps.append("daily_summary")
+                print_pipeline_summary(results)
+                return completed.returncode
+            results.daily_summary = "OK"
+    else:
+        print("Skipping daily summary (--skip-daily-summary)", file=sys.stderr)
 
     # Step 6: Summarizer
     if not args.skip_summarizer:
