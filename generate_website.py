@@ -394,12 +394,12 @@ def generate_dailys_page(
 
 
 def generate_index_page(website_dir: Path) -> None:
-    body_html = """<h1>Deal Hub</h1>
+    body_html = """<h1>Antler Canada</h1>
 <ul>
   <li><a href="deals.html">Deals</a></li>
   <li><a href="dailys.html">Activity</a></li>
 </ul>"""
-    document_html = build_website_page("Deal Hub", body_html)
+    document_html = build_website_page("Antler Canada", body_html)
 
     output_path = website_dir / "index.html"
     output_path.write_text(document_html, encoding="utf-8")
