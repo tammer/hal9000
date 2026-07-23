@@ -181,6 +181,44 @@ python process_emails.py [--dry-run]
 
 ---
 
+### `process_deal.py`
+
+Generate or refresh `ai-generated/deal.json` for a deal folder (per-file Claude metadata, mtime cache).
+
+```bash
+python process_deal.py <relative_path>
+```
+
+**Example:**
+
+```bash
+python process_deal.py Mobi
+```
+
+**Requires:** `ANTHROPIC_API_KEY`, `GOOGLE_DRIVE_BASE`
+
+---
+
+### `process_portco.py`
+
+Same as `process_deal.py`, but for a portfolio-company folder under the sibling `portcos/` directory. Writes `ai-generated/portco.json`.
+
+```bash
+python process_portco.py <folder>
+```
+
+**Example:**
+
+```bash
+python process_portco.py Central-Agent
+```
+
+**Output:** `portcos/<folder>/ai-generated/portco.json`
+
+**Requires:** `ANTHROPIC_API_KEY`, `GOOGLE_DRIVE_BASE`
+
+---
+
 ## Summarization and publishing
 
 ### `claude_summary.py`

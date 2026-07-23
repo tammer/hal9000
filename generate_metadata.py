@@ -119,15 +119,23 @@ MetadataResult = TypedDict(
 )
 
 
-def resolve_file_path(relative_path: str) -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    base = Path(base_raw).resolve()
-    path = (base / relative_path.lstrip("/")).resolve()
+def resolve_file_path(
+    relative_path: str,
+    *,
+    base: Path | None = None,
+) -> Path:
+    if base is None:
+        base_raw = os.getenv("GOOGLE_DRIVE_BASE")
+        if not base_raw:
+            raise ValueError("GOOGLE_DRIVE_BASE is not set")
+        resolved_base = Path(base_raw).resolve()
+    else:
+        resolved_base = base.resolve()
 
-    if base not in path.parents and path != base:
-        raise ValueError(f"path escapes Google Drive root: {relative_path}")
+    path = (resolved_base / relative_path.lstrip("/")).resolve()
+
+    if resolved_base not in path.parents and path != resolved_base:
+        raise ValueError(f"path escapes root: {relative_path}")
 
     return path
 
@@ -212,8 +220,9 @@ def generate_metadata(
     *,
     api_key: str | None = None,
     model: str | None = None,
+    base: Path | None = None,
 ) -> MetadataResult:
-    path = resolve_file_path(relative_path)
+    path = resolve_file_path(relative_path, base=base)
     if not path.exists():
         raise FileNotFoundError(f"path does not exist: {path}")
     if not path.is_file():

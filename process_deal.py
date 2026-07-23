@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,17 +15,22 @@ from dotenv import load_dotenv
 from claude_common import resolve_folder_path
 from consolidator import DATETIME_FMT, file_mtime
 from document_utils import FORBIDDEN_DIR_NAMES, list_candidate_files
+from fetch_transcripts import deals_base
 from generate_metadata import generate_metadata
 
 DEAL_JSON_NAME = "deal.json"
 
 
+def company_json_path(folder: Path, json_name: str) -> Path:
+    return folder / "ai-generated" / json_name
+
+
 def deal_json_path(folder: Path) -> Path:
-    return folder / "ai-generated" / DEAL_JSON_NAME
+    return company_json_path(folder, DEAL_JSON_NAME)
 
 
 def load_deal_cache(path: Path) -> dict[str, dict[str, Any]]:
-    """Load existing deal.json and index entries by filename."""
+    """Load existing metadata JSON and index entries by filename."""
     if not path.is_file():
         return {}
 
@@ -53,12 +57,12 @@ def load_deal_cache(path: Path) -> dict[str, dict[str, Any]]:
     return cache
 
 
+def relative_to_base(path: Path, base: Path) -> str:
+    return path.resolve().relative_to(base.resolve()).as_posix()
+
+
 def relative_to_drive_base(path: Path) -> str:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    base = Path(base_raw).resolve()
-    return path.resolve().relative_to(base).as_posix()
+    return relative_to_base(path, deals_base())
 
 
 def is_cache_fresh(entry: dict[str, Any], path: Path) -> bool:
@@ -72,11 +76,16 @@ def is_cache_fresh(entry: dict[str, Any], path: Path) -> bool:
     return file_mtime(path) <= generated_at
 
 
-def write_deal_json(folder: Path, entries: list[dict[str, Any]]) -> tuple[Path, bool]:
-    """Write deal.json if content changed. Returns (path, wrote)."""
+def write_company_json(
+    folder: Path,
+    entries: list[dict[str, Any]],
+    *,
+    json_name: str,
+) -> tuple[Path, bool]:
+    """Write ai-generated/<json_name> if content changed. Returns (path, wrote)."""
     ai_dir = folder / "ai-generated"
     ai_dir.mkdir(parents=True, exist_ok=True)
-    output_path = ai_dir / DEAL_JSON_NAME
+    output_path = ai_dir / json_name
     new_text = json.dumps(entries, indent=2, ensure_ascii=False) + "\n"
     if output_path.is_file():
         try:
@@ -88,14 +97,17 @@ def write_deal_json(folder: Path, entries: list[dict[str, Any]]) -> tuple[Path, 
     return output_path, True
 
 
-def process_deal(relative_path: str) -> Path:
-    folder = resolve_folder_path(relative_path)
-    if not folder.exists():
-        raise FileNotFoundError(f"path does not exist: {folder}")
-    if not folder.is_dir():
-        raise NotADirectoryError(f"path is not a directory: {folder}")
+def write_deal_json(folder: Path, entries: list[dict[str, Any]]) -> tuple[Path, bool]:
+    return write_company_json(folder, entries, json_name=DEAL_JSON_NAME)
 
-    output_path = deal_json_path(folder)
+
+def process_company_folder(
+    folder: Path,
+    *,
+    path_base: Path,
+    json_name: str,
+) -> Path:
+    output_path = company_json_path(folder, json_name)
     cache = load_deal_cache(output_path)
     candidates = list_candidate_files(
         folder, recursive=True, exclude_dirs=FORBIDDEN_DIR_NAMES
@@ -106,7 +118,7 @@ def process_deal(relative_path: str) -> Path:
     regenerated = 0
 
     for path in candidates:
-        rel = relative_to_drive_base(path)
+        rel = relative_to_base(path, path_base)
         cached = cache.get(rel)
 
         if cached is not None and is_cache_fresh(cached, path):
@@ -117,7 +129,7 @@ def process_deal(relative_path: str) -> Path:
 
         print(f"Generating: {rel}", file=sys.stderr)
         try:
-            entry = dict(generate_metadata(rel))
+            entry = dict(generate_metadata(rel, base=path_base))
             results.append(entry)
             regenerated += 1
         except Exception as exc:
@@ -131,7 +143,7 @@ def process_deal(relative_path: str) -> Path:
                 reused += 1
 
     results.sort(key=lambda entry: str(entry.get("created_at", "")))
-    written, changed = write_deal_json(folder, results)
+    written, changed = write_company_json(folder, results, json_name=json_name)
     action = "Wrote" if changed else "Unchanged"
     print(
         f"{action} {written} ({len(results)} entries; "
@@ -139,6 +151,20 @@ def process_deal(relative_path: str) -> Path:
         file=sys.stderr,
     )
     return written
+
+
+def process_deal(relative_path: str) -> Path:
+    folder = resolve_folder_path(relative_path)
+    if not folder.exists():
+        raise FileNotFoundError(f"path does not exist: {folder}")
+    if not folder.is_dir():
+        raise NotADirectoryError(f"path is not a directory: {folder}")
+
+    return process_company_folder(
+        folder,
+        path_base=deals_base(),
+        json_name=DEAL_JSON_NAME,
+    )
 
 
 def parse_args() -> argparse.Namespace:
