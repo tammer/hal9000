@@ -248,6 +248,40 @@ Before summarizing, prints the relative paths of all documents that will be sent
 
 ---
 
+### `claude_summary2.py`
+
+Generates an investment summary from `ai-generated/deal.json` using Claude (refreshes deal metadata first unless `--dry-run`).
+
+```bash
+python claude_summary2.py <relative_path> [--dry-run]
+```
+
+**Output:** `ai-generated/summary.md` in the deal folder.
+
+**Requires:** `ANTHROPIC_API_KEY`, `GOOGLE_DRIVE_BASE`
+
+---
+
+### `generate_portco_report.py`
+
+Same flow as `claude_summary2.py` for a portfolio company under sibling `portcos/`: refreshes `portco.json`, then writes `ai-generated/summary.md` using `portco_report_prompt.md`.
+
+```bash
+python generate_portco_report.py <folder> [--dry-run]
+```
+
+**Example:**
+
+```bash
+python generate_portco_report.py Central-Agent
+```
+
+**Output:** `portcos/<folder>/ai-generated/summary.md`
+
+**Requires:** `ANTHROPIC_API_KEY`, `GOOGLE_DRIVE_BASE`
+
+---
+
 ### `summarizer.py`
 
 Reads every deal's `ai-generated/summary.md`, extracts structured fields (product, founders, status) with Groq, and writes a portfolio status table.

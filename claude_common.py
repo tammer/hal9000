@@ -75,10 +75,14 @@ def resolve_folder_path(relative_path: str) -> Path:
     return folder
 
 
+def load_prompt_file(path: Path) -> str:
+    if not path.exists():
+        raise FileNotFoundError(f"prompt not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
 def load_summary_prompt() -> str:
-    if not SUMMARY_PROMPT_PATH.exists():
-        raise FileNotFoundError(f"summary prompt not found: {SUMMARY_PROMPT_PATH}")
-    return SUMMARY_PROMPT_PATH.read_text(encoding="utf-8")
+    return load_prompt_file(SUMMARY_PROMPT_PATH)
 
 
 def extract_response_text(response) -> str:
@@ -166,10 +170,11 @@ def require_api_key() -> str | None:
     return api_key
 
 
-def load_system_prompt() -> str | None:
-    """Load the summary system prompt, or print an error and return None."""
+def load_system_prompt(prompt_path: Path | None = None) -> str | None:
+    """Load a system prompt file, or print an error and return None."""
+    path = prompt_path if prompt_path is not None else SUMMARY_PROMPT_PATH
     try:
-        return load_summary_prompt()
+        return load_prompt_file(path)
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return None
