@@ -72,15 +72,20 @@ def is_cache_fresh(entry: dict[str, Any], path: Path) -> bool:
     return file_mtime(path) <= generated_at
 
 
-def write_deal_json(folder: Path, entries: list[dict[str, Any]]) -> Path:
+def write_deal_json(folder: Path, entries: list[dict[str, Any]]) -> tuple[Path, bool]:
+    """Write deal.json if content changed. Returns (path, wrote)."""
     ai_dir = folder / "ai-generated"
     ai_dir.mkdir(parents=True, exist_ok=True)
     output_path = ai_dir / DEAL_JSON_NAME
-    output_path.write_text(
-        json.dumps(entries, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return output_path
+    new_text = json.dumps(entries, indent=2, ensure_ascii=False) + "\n"
+    if output_path.is_file():
+        try:
+            if output_path.read_text(encoding="utf-8") == new_text:
+                return output_path, False
+        except OSError:
+            pass
+    output_path.write_text(new_text, encoding="utf-8")
+    return output_path, True
 
 
 def process_deal(relative_path: str) -> Path:
@@ -126,9 +131,10 @@ def process_deal(relative_path: str) -> Path:
                 reused += 1
 
     results.sort(key=lambda entry: str(entry.get("created_at", "")))
-    written = write_deal_json(folder, results)
+    written, changed = write_deal_json(folder, results)
+    action = "Wrote" if changed else "Unchanged"
     print(
-        f"Wrote {written} ({len(results)} entries; "
+        f"{action} {written} ({len(results)} entries; "
         f"{regenerated} generated, {reused} reused)",
         file=sys.stderr,
     )
