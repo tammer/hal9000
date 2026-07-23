@@ -100,6 +100,33 @@ Hard rules:
 reason must be one concise sentence. If relevant=true, name the matching company or person and where it appears, and briefly note why the conversation fits a deal assessment.
 """
 
+MEETING_DEAL_MATCH_SYSTEM_PROMPT = """You decide which single startup deal folder a MeetGeek meeting belongs to.
+
+You are given meeting metadata, a transcript excerpt, and a catalog of deal folders with their identities.
+
+Return valid JSON only with this exact shape:
+{"deal_folder": "FolderName" or null, "reason": "short explanation"}
+
+A meeting matches a deal ONLY if BOTH of the following are true:
+
+1. Identity evidence: the company name and/or one of the human names from that deal appears in the meeting title, attendee names, participant emails, host email, or transcript text.
+2. Conversation nature: the transcript excerpt shows a deal-assessment discussion — Antler or investor-side people asking diligence-style questions (market, product, traction, team, fundraising, GTM, etc.) and founders or startup-side people answering about their business.
+
+Hard rules:
+- These Antler team members appear on ALL deals and must NEVER determine a match:
+  Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
+- Do NOT match similar-sounding or partially similar names (e.g. Chen is not Chan)
+- Do NOT infer company matches from email domains or substrings
+- Do NOT match based on shared generic topics alone
+- Return at most one deal_folder; if no deal matches, return null
+- If multiple deals could match, pick the one with the strongest name/company evidence; if still tied, return null
+- Casual mentions, social catch-ups, or unrelated work meetings are NOT a match even if a name appears
+- If conversation context is missing or thin (empty excerpt, greetings only) and identity evidence is weak, return null
+
+reason must be one concise sentence. If deal_folder is set, name the matching company or person and where it appears, and briefly note why the conversation fits a deal assessment.
+- deal_folder must be a deal folder name string or null; never include explanations in JSON values
+"""
+
 
 @dataclass(frozen=True)
 class DealIdentity:
@@ -616,6 +643,31 @@ def find_programmatic_deal_match(
     )
 
 
+def format_deal_targets_for_prompt(targets: list[DealMatchTarget]) -> str:
+    lines: list[str] = []
+    for target in targets:
+        company = target.identity.company_name or "(none)"
+        people = ", ".join(target.identity.human_names) or "(none)"
+        lines.append(
+            f"- folder: {target.folder_name}\n"
+            f"  company: {company}\n"
+            f"  people: {people}"
+        )
+    return "\n".join(lines)
+
+
+def build_meeting_match_prompt(
+    meeting: Meeting,
+    sentences: list[Sentence],
+    targets: list[DealMatchTarget],
+) -> str:
+    return (
+        f"{build_meeting_metadata_prompt(meeting, sentences)}\n\n"
+        "Deal catalog:\n"
+        f"{format_deal_targets_for_prompt(targets)}"
+    )
+
+
 def find_matching_deal(
     meeting: Meeting,
     sentences: list[Sentence],
@@ -624,30 +676,36 @@ def find_matching_deal(
     api_key: str,
     model: str,
 ) -> MatchResult:
-    matches: list[tuple[str, str]] = []
-    for target in targets:
-        relevance = classify_relevance(
-            meeting,
-            sentences,
-            target.identity,
-            api_key=api_key,
-            model=model,
-        )
-        if relevance.relevant:
-            matches.append((target.folder_name, relevance.reason))
+    programmatic = find_programmatic_deal_match(meeting, sentences, targets)
+    if programmatic is not None:
+        return programmatic
 
-    if len(matches) == 1:
-        return MatchResult(deal_folder=matches[0][0], reason=matches[0][1])
-    if len(matches) > 1:
-        folder_names = ", ".join(name for name, _ in matches)
+    if not targets:
         return MatchResult(
             deal_folder=None,
-            reason=f"Multiple deals matched: {folder_names}.",
+            reason="No deal identity matched the meeting.",
         )
-    return MatchResult(
-        deal_folder=None,
-        reason="No deal identity matched the meeting.",
+
+    payload = groq_json_chat(
+        system_prompt=MEETING_DEAL_MATCH_SYSTEM_PROMPT,
+        user_prompt=build_meeting_match_prompt(meeting, sentences, targets),
+        api_key=api_key,
+        model=model,
     )
+    deal_folder_raw = payload.get("deal_folder")
+    deal_folder = str(deal_folder_raw).strip() if deal_folder_raw else None
+    if deal_folder and deal_folder.lower() in {"null", "none", ""}:
+        deal_folder = None
+
+    known = {target.folder_name for target in targets}
+    if deal_folder and deal_folder not in known:
+        return MatchResult(
+            deal_folder=None,
+            reason=f"Model returned unknown deal folder: {deal_folder}",
+        )
+
+    reason = str(payload.get("reason", "")).strip() or "No reason provided."
+    return MatchResult(deal_folder=deal_folder, reason=reason)
 
 
 def meeting_date_label(timestamp_start_utc: str) -> str:
