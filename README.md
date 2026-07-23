@@ -165,7 +165,7 @@ Uses documents to extract company/people identity, then scores each recent meeti
 
 ### `process_emails.py`
 
-Fetches unread inbox mail, matches each message to a deal folder with an LLM, and saves it as a `.txt` file. Successfully written messages are marked as read.
+Fetches unread inbox mail, matches each message to a folder under `GOOGLE_DRIVE_BASE` (deals) or its sibling `portcos/` with an LLM, and saves it as a `.txt` file. Successfully written messages are marked as read.
 
 ```bash
 python process_emails.py [--dry-run]
@@ -175,7 +175,7 @@ python process_emails.py [--dry-run]
 |------|-------------|
 | `--dry-run` | Report matches without writing files or marking messages read |
 
-**Output:** `email_<timestamp>_<subject>.txt` files in the matched deal's `emails/` folder.
+**Output:** `email_<timestamp>_<subject>.txt` files in the matched folder's `emails/` directory (under deals or portcos).
 
 **Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE`, `MAIL_IMAP_HOST`, `MAIL_ADDRESS`, `MAIL_PASSWORD`
 

@@ -19,7 +19,7 @@ from fetch_all_transcripts import (
     DealCatalogEntry,
     catalog_targets,
     deals_base,
-    load_deal_catalog,
+    load_combined_catalog,
     print_deal_catalog,
     resolve_catalog_entry,
 )
@@ -32,29 +32,30 @@ from fetch_transcripts import (
 EMAIL_FILENAME_PREFIX = "email_"
 EMAILS_DIR_NAME = "emails"
 
-EMAIL_DEAL_MATCH_SYSTEM_PROMPT = """You decide which single startup deal folder an email belongs to.
+EMAIL_DEAL_MATCH_SYSTEM_PROMPT = """You decide which single startup folder an email belongs to.
 
-You are given email metadata, body text, and a catalog of deal folders with their identities.
+You are given email metadata, body text, and a catalog of deal and portfolio-company folders with their identities.
 
 Return valid JSON only with this exact shape:
 {"deal_folder": "FolderName" or null, "reason": "short explanation"}
 
-An email matches a deal when the company name and/or a deal person's name appears in the subject, sender, recipients, or body.
+An email matches a folder when the company name and/or a person's name from that folder appears in the subject, sender, recipients, or body.
 
 Matching rules:
-- First-name matches count: "Jad" in a subject matches deal person "Jad Fadlallah" in folder "Jad"
-- Deal folder names are often a founder's first name; if the folder name appears in the email, that is strong evidence
+- First-name matches count: "Jad" in a subject matches person "Jad Fadlallah" in folder "Jad"
+- Folder names are often a founder's first name; if the folder name appears in the email, that is strong evidence
 - Company name matches count when the company name clearly appears in the email
-- These Antler team members appear on ALL deals and must NEVER determine a match:
+- The catalog includes both active deals and portfolio companies; treat them the same for matching
+- These Antler team members appear on ALL folders and must NEVER determine a match:
   Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
 - Do NOT match different similar-sounding names for different people (e.g. Chen is not Chan)
 - Do NOT infer company matches from email domains alone
 - Do NOT match based on shared generic topics alone
-- Return at most one deal_folder; if no deal matches, return null
-- If multiple deals could match, pick the one with the strongest name/company evidence; if still tied, return null
+- Return at most one deal_folder; if no folder matches, return null
+- If multiple folders could match, pick the one with the strongest name/company evidence; if still tied, return null
 
-reason must be one concise sentence. If deal_folder is set, name the matching company or person and the deal folder.
-- deal_folder must be a deal folder name string or null; never include explanations in JSON values
+reason must be one concise sentence. If deal_folder is set, name the matching company or person and the folder.
+- deal_folder must be a folder name string or null; never include explanations in JSON values
 """
 
 
@@ -229,7 +230,7 @@ def build_email_match_prompt(
         f"- Date: {message.get('Date', '')}\n\n"
         "Email body:\n"
         f"{body}\n\n"
-        "Deal catalog:\n"
+        "Folder catalog (deals and portfolio companies):\n"
         f"{format_deal_catalog_for_prompt(catalog)}"
     )
 
@@ -458,14 +459,21 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
+    if not base.exists() or not base.is_dir():
+        print(f"Error: deals base is not a directory: {base}", file=sys.stderr)
+        return 1
+
     try:
-        catalog = load_deal_catalog(base, api_key=api_key, model=model)
+        catalog = load_combined_catalog(api_key=api_key, model=model)
     except Exception as exc:
         print(f"Error: failed to load deal catalog: {exc}", file=sys.stderr)
         return 1
 
     if not catalog:
-        print("Error: no deals found under GOOGLE_DRIVE_BASE", file=sys.stderr)
+        print(
+            "Error: no folders with usable documents found under deals or portcos",
+            file=sys.stderr,
+        )
         return 1
 
     print_deal_catalog(catalog)
