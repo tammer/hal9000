@@ -49,7 +49,9 @@ def list_deal_folders(base: Path) -> list[Path]:
     return sorted(
         entry
         for entry in base.iterdir()
-        if entry.is_dir() and not entry.name.startswith(".")
+        if entry.is_dir()
+        and not entry.name.startswith(".")
+        and entry.name != "ai-generated"
     )
 
 
