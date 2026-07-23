@@ -125,7 +125,7 @@ Before Claude summaries, the pipeline scans deal folders and prints notes for em
 
 ### `fetch_all_transcripts.py`
 
-Fetches team MeetGeek meetings since a cutoff date, matches each meeting to a deal folder using an LLM, and writes relevant transcripts.
+Fetches team MeetGeek meetings since a cutoff date, matches each meeting to a folder under `GOOGLE_DRIVE_BASE` (deals) or its sibling `portcos/` using an LLM, and writes relevant transcripts.
 
 ```bash
 python fetch_all_transcripts.py [--cutoff-date DATE] [--dry-run]
@@ -136,7 +136,7 @@ python fetch_all_transcripts.py [--cutoff-date DATE] [--dry-run]
 | `--cutoff-date DATE` | Include meetings on or after this date (`YYYY-MM-DD`). Default: 2 days ago |
 | `--dry-run` | Report actions without writing files |
 
-**Output:** transcript `.txt` files in the matched deal's `transcripts/` folder.
+**Output:** transcript `.txt` files in the matched folder's `transcripts/` directory (under deals or portcos).
 
 **Requires:** `GROQ_API_KEY`, `MEETGEEK_API_KEY`, `MEETGEEK_TEAM_ID`, `GOOGLE_DRIVE_BASE`
 
@@ -144,19 +144,20 @@ python fetch_all_transcripts.py [--cutoff-date DATE] [--dry-run]
 
 ### `fetch_transcripts.py`
 
-Fetches recent MeetGeek transcripts for a **single** deal folder (last 4 days).
+Fetches recent MeetGeek transcripts for a **single** company folder (last 8 days). Path must be rooted under `deals/` or `portcos/`.
 
 ```bash
-python fetch_transcripts.py <relative_path>
+python fetch_transcripts.py <deals|portcos>/<folder>
 ```
 
-**Example:**
+**Examples:**
 
 ```bash
-python fetch_transcripts.py Mobi
+python fetch_transcripts.py deals/Mobi
+python fetch_transcripts.py portcos/Central-Agent
 ```
 
-Uses deal documents to extract company/people identity, then scores each recent meeting for relevance. Writes matching transcripts as `.txt` files under the deal's `transcripts/` folder.
+Uses documents to extract company/people identity, then scores each recent meeting for relevance. Writes matching transcripts as `.txt` files under the folder's `transcripts/` directory.
 
 **Requires:** `GROQ_API_KEY`, `MEETGEEK_API_KEY`, `GOOGLE_DRIVE_BASE`
 
@@ -459,7 +460,7 @@ python run_pipeline.py
 **Single deal — refresh transcript and summary:**
 
 ```bash
-python fetch_transcripts.py Mobi
+python fetch_transcripts.py deals/Mobi
 python claude_summary.py Mobi
 ```
 

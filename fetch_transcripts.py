@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 from groq import Groq
 
 from document_utils import read_file_as_text
-from generate_contents import resolve_folder_path
 from get_facts import parse_json_response
 from meetgeek_client import (
     MeetGeekError,
@@ -23,6 +22,8 @@ from meetgeek_client import (
     get_transcript,
     list_recent_meetings,
 )
+
+COMPANY_ROOTS = frozenset({"deals", "portcos"})
 
 LOOKBACK_DAYS = 8
 MAX_DEAL_DOC_CHARS = 100_000
@@ -131,6 +132,42 @@ class MeetingOutcome:
     date_label: str
     filename: str | None = None
     reason: str = ""
+
+
+def deals_base() -> Path:
+    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
+    if not base_raw:
+        raise ValueError("GOOGLE_DRIVE_BASE is not set")
+    return Path(base_raw).resolve()
+
+
+def portcos_base() -> Path:
+    return deals_base().parent / "portcos"
+
+
+def resolve_company_folder_path(relative_path: str) -> Path:
+    """Resolve ``deals/<folder>`` or ``portcos/<folder>`` to an absolute path."""
+    cleaned = relative_path.strip().lstrip("/")
+    parts = Path(cleaned).parts
+    if not parts or parts[0] not in COMPANY_ROOTS:
+        raise ValueError(
+            "path must start with 'deals/' or 'portcos/' "
+            f"(e.g. deals/Tony or portcos/Central-Agent); got {relative_path!r}"
+        )
+    if len(parts) < 2:
+        raise ValueError(
+            f"path must include a folder under {parts[0]}/; got {relative_path!r}"
+        )
+
+    root = parts[0]
+    rest = Path(*parts[1:])
+    base = deals_base() if root == "deals" else portcos_base()
+    folder = (base / rest).resolve()
+
+    if base not in folder.parents and folder != base:
+        raise ValueError(f"path escapes {root} root: {relative_path}")
+
+    return folder
 
 
 def load_processed_meeting_ids(
@@ -724,12 +761,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Fetch recent MeetGeek transcripts and write relevant ones "
-            "into a deal transcripts folder."
+            "into a company transcripts folder."
         )
     )
     parser.add_argument(
         "relative_path",
-        help="Relative path under Google Drive to the deal folder",
+        help="Path as deals/<folder> or portcos/<folder> (e.g. deals/Tony)",
     )
     parser.add_argument(
         "--dry-run",
@@ -756,7 +793,7 @@ def main() -> int:
     model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
     try:
-        folder = resolve_folder_path(args.relative_path)
+        folder = resolve_company_folder_path(args.relative_path)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

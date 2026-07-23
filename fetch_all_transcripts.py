@@ -16,12 +16,14 @@ from fetch_transcripts import (
     append_processed_meeting_id,
     build_deal_payload,
     collect_deal_context,
+    deals_base,
     extract_deal_identity,
     find_existing_transcript,
     find_matching_deal,
     format_transcript_text,
     load_processed_meeting_ids,
     meeting_date_label,
+    portcos_base,
     should_record_processed,
     transcript_basename,
     transcript_relative_path,
@@ -52,13 +54,6 @@ class MeetingOutcome:
     deal_folder: str | None = None
     filename: str | None = None
     reason: str = ""
-
-
-def deals_base() -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    return Path(base_raw).resolve()
 
 
 def default_cutoff_date() -> date:
@@ -133,12 +128,46 @@ def load_deal_catalog(
     return catalog
 
 
+def load_combined_catalog(
+    *,
+    api_key: str,
+    model: str,
+) -> list[DealCatalogEntry]:
+    deals = deals_base()
+    catalog = load_deal_catalog(deals, api_key=api_key, model=model)
+    known_names = {entry.folder_name for entry in catalog}
+
+    portcos = portcos_base()
+    if not portcos.exists() or not portcos.is_dir():
+        print(
+            f"Warning: portcos folder not found or not a directory: {portcos}",
+            file=sys.stderr,
+        )
+        return catalog
+
+    for entry in load_deal_catalog(portcos, api_key=api_key, model=model):
+        if entry.folder_name in known_names:
+            print(
+                f"Warning: skipping portcos/{entry.folder_name}; "
+                "name already present under deals",
+                file=sys.stderr,
+            )
+            continue
+        catalog.append(entry)
+        known_names.add(entry.folder_name)
+
+    return catalog
+
+
 def print_deal_catalog(catalog: list[DealCatalogEntry]) -> None:
     print(f"Loaded {len(catalog)} deal(s):")
     for deal in catalog:
         company = deal.identity.company_name or "(none)"
         people = ", ".join(deal.identity.human_names) or "(none)"
-        print(f"  {deal.folder_name}: company={company}; people={people}")
+        root = deal.folder.parent.name
+        print(
+            f"  [{root}] {deal.folder_name}: company={company}; people={people}"
+        )
     print()
 
 
@@ -331,7 +360,7 @@ def main() -> int:
         print()
 
     try:
-        catalog = load_deal_catalog(base, api_key=api_key, model=model)
+        catalog = load_combined_catalog(api_key=api_key, model=model)
     except Exception as exc:
         print(f"Error: failed to load deal catalog: {exc}", file=sys.stderr)
         return 1
