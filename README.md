@@ -79,11 +79,12 @@ python run_pipeline.py [options]
 1. **Fetch transcripts** — `fetch_all_transcripts.py`
 2. **Process emails** — `process_emails.py`
 3. **Meeting roundup** — `meeting_roundup.py`
-4. **Daily summary** — `daily_summary.py`
-5. **Claude summaries** — `claude_summary2.py` for every deal folder
-6. **Summarizer** — `summarizer.py` (builds `status.md`)
-7. **Website** — `generate_website.py`
-8. **Deploy** — `website_deploy.py`
+4. **Claude summaries** — `claude_summary2.py` for every deal folder
+5. **Process portcos** — `process_portco.py` for every portco folder
+6. **Daily summary** — `daily_summary.py`
+7. **Summarizer** — `summarizer.py` (builds `status.md`)
+8. **Website** — `generate_website.py`
+9. **Deploy** — `website_deploy.py`
 
 **Options:**
 
@@ -94,11 +95,12 @@ python run_pipeline.py [options]
 | `--skip-fetch` | Skip step 1 |
 | `--skip-emails` | Skip step 2 |
 | `--skip-meeting-roundup` | Skip step 3 |
-| `--skip-daily-summary` | Skip step 4 |
-| `--skip-claude` | Skip step 5 |
-| `--skip-summarizer` | Skip step 6 |
-| `--skip-website` | Skip step 7 |
-| `--skip-deploy` | Skip step 8 |
+| `--skip-claude` | Skip step 4 |
+| `--skip-portco` | Skip step 5 |
+| `--skip-daily-summary` | Skip step 6 |
+| `--skip-summarizer` | Skip step 7 |
+| `--skip-website` | Skip step 8 |
+| `--skip-deploy` | Skip step 9 |
 | `--confirm` | Ask yes/no before running each step |
 
 **Examples:**
