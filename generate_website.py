@@ -14,7 +14,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from html_utils import load_styles, markdown_to_html
-from paths import deals_base, list_company_folders, shared_ai_dir
+from paths import deals_base, list_company_folders, portcos_base, shared_ai_dir
 
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|\s*$")
@@ -35,6 +35,10 @@ def resolve_website_dir() -> Path:
 
 def summary_path_for_deal(deal_folder: Path) -> Path:
     return deal_folder / "ai-generated" / "summary.md"
+
+
+def summary_path_for_portco(portco_folder: Path) -> Path:
+    return portco_folder / "ai-generated" / "summary.md"
 
 
 def delete_html_files(website_dir: Path) -> int:
@@ -185,6 +189,43 @@ def generate_deal_pages(
     return linked_deal_names, written
 
 
+def generate_portco_pages(
+    portco_folders: list[Path],
+    website_dir: Path,
+) -> tuple[set[str], int]:
+    linked_portco_names: set[str] = set()
+    written = 0
+
+    for portco_folder in portco_folders:
+        summary_path = summary_path_for_portco(portco_folder)
+        if not summary_path.is_file():
+            print(
+                f"Warning: skipping {portco_folder.name} (no ai-generated/summary.md)",
+                file=sys.stderr,
+            )
+            continue
+
+        summary_text = summary_path.read_text(encoding="utf-8")
+        body_html = (
+            f"<h1>{html.escape(portco_folder.name)}</h1>\n"
+            + markdown_to_html(summary_text, demote_h1=False)
+        )
+        document_html = build_website_page(
+            portco_folder.name,
+            body_html,
+            back_href="portcos.html",
+            back_label="← All portcos",
+        )
+
+        output_path = website_dir / f"{portco_folder.name}.html"
+        output_path.write_text(document_html, encoding="utf-8")
+        linked_portco_names.add(portco_folder.name)
+        written += 1
+        print(f"Wrote {output_path.name}", file=sys.stderr)
+
+    return linked_portco_names, written
+
+
 def generate_deals_page(
     website_dir: Path,
     linked_deal_names: set[str],
@@ -206,6 +247,31 @@ def generate_deals_page(
     )
 
     output_path = website_dir / "deals.html"
+    output_path.write_text(document_html, encoding="utf-8")
+    print(f"Wrote {output_path.name}", file=sys.stderr)
+
+
+def generate_portcos_page(
+    website_dir: Path,
+    linked_portco_names: set[str],
+) -> None:
+    if linked_portco_names:
+        list_md = "\n".join(
+            f"- [{name}]({name}.html)" for name in sorted(linked_portco_names)
+        )
+        markdown = f"# Portcos\n\n{list_md}\n"
+    else:
+        markdown = "# Portcos\n\nNo portco summaries yet.\n"
+
+    body_html = markdown_to_html(markdown, demote_h1=False)
+    document_html = build_website_page(
+        "Portcos",
+        body_html,
+        back_href="index.html",
+        back_label="← Home",
+    )
+
+    output_path = website_dir / "portcos.html"
     output_path.write_text(document_html, encoding="utf-8")
     print(f"Wrote {output_path.name}", file=sys.stderr)
 
@@ -279,7 +345,10 @@ def render_deals_section(
     return "<h2>Deals</h2>\n" + "\n".join(parts)
 
 
-def render_portcos_section(items: list[Any]) -> str | None:
+def render_portcos_section(
+    items: list[Any],
+    linked_portco_names: set[str],
+) -> str | None:
     parts: list[str] = []
     for item in items:
         if not isinstance(item, dict):
@@ -288,7 +357,14 @@ def render_portcos_section(items: list[Any]) -> str | None:
         summary = item.get("summary")
         if not isinstance(portco, str) or not isinstance(summary, str):
             continue
-        parts.append(f"<h3>{html.escape(portco)}</h3>")
+        if portco in linked_portco_names:
+            portco_html = (
+                f'<a href="{html.escape(portco, quote=True)}.html">'
+                f"{html.escape(portco)}</a>"
+            )
+        else:
+            portco_html = html.escape(portco)
+        parts.append(f"<h3>{portco_html}</h3>")
         parts.append(f"<p>{html.escape(summary)}</p>")
 
     if not parts:
@@ -337,6 +413,7 @@ def render_meetgeeks_section(items: list[Any]) -> str | None:
 def render_daily_summaries_html(
     days: list[tuple[str, Path | None, Path | None, Path | None]],
     linked_deal_names: set[str],
+    linked_portco_names: set[str],
 ) -> str:
     if not days:
         return "<p>No daily summaries yet.</p>"
@@ -360,7 +437,7 @@ def render_daily_summaries_html(
         if portcos_path is not None:
             raw = load_json_list(portcos_path)
             if raw is not None:
-                portcos_html = render_portcos_section(raw)
+                portcos_html = render_portcos_section(raw, linked_portco_names)
                 if portcos_html is not None:
                     parts.append(portcos_html)
                     has_content = True
@@ -384,13 +461,16 @@ def render_daily_summaries_html(
 def generate_dailys_page(
     website_dir: Path,
     linked_deal_names: set[str],
+    linked_portco_names: set[str],
 ) -> None:
     ai_dir = shared_ai_dir()
     deals_dir = ai_dir / "dailies" / "deals"
     meetgeeks_dir = ai_dir / "dailies" / "meetgeeks"
     portcos_dir = ai_dir / "dailies" / "portcos"
     days = list_recent_daily_days(deals_dir, meetgeeks_dir, portcos_dir, limit=5)
-    body_html = render_daily_summaries_html(days, linked_deal_names)
+    body_html = render_daily_summaries_html(
+        days, linked_deal_names, linked_portco_names
+    )
     document_html = build_website_page(
         "Daily Summaries",
         body_html,
@@ -407,6 +487,7 @@ def generate_index_page(website_dir: Path) -> None:
     body_html = """<h1>Antler Canada</h1>
 <ul>
   <li><a href="deals.html">Deals</a></li>
+  <li><a href="portcos.html">Portcos</a></li>
   <li><a href="dailys.html">Activity</a></li>
 </ul>"""
     document_html = build_website_page("Antler Canada", body_html)
@@ -418,7 +499,7 @@ def generate_index_page(website_dir: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate the deal portfolio website from summaries."
+        description="Generate the deal and portco portfolio website from summaries."
     )
     parser.add_argument(
         "--deploy",
@@ -433,14 +514,15 @@ def main() -> int:
     load_dotenv()
 
     try:
-        base = deals_base()
+        deals_root = deals_base()
+        portcos_root = portcos_base()
         website_dir = resolve_website_dir()
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    if not base.is_dir():
-        print(f"Error: deals base is not a directory: {base}", file=sys.stderr)
+    if not deals_root.is_dir():
+        print(f"Error: deals base is not a directory: {deals_root}", file=sys.stderr)
         return 1
 
     website_dir.mkdir(parents=True, exist_ok=True)
@@ -449,7 +531,7 @@ def main() -> int:
     if removed:
         print(f"Removed {removed} existing HTML file(s)", file=sys.stderr)
 
-    deal_folders = list_company_folders(base)
+    deal_folders = list_company_folders(deals_root)
     linked_deal_names, deal_count = generate_deal_pages(deal_folders, website_dir)
 
     try:
@@ -458,12 +540,27 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    generate_dailys_page(website_dir, linked_deal_names)
+    linked_portco_names: set[str] = set()
+    portco_count = 0
+    if portcos_root.is_dir():
+        portco_folders = list_company_folders(portcos_root)
+        linked_portco_names, portco_count = generate_portco_pages(
+            portco_folders, website_dir
+        )
+    else:
+        print(
+            f"Warning: portcos base is not a directory: {portcos_root}",
+            file=sys.stderr,
+        )
+
+    generate_portcos_page(website_dir, linked_portco_names)
+    generate_dailys_page(website_dir, linked_deal_names, linked_portco_names)
     generate_index_page(website_dir)
 
     print(
-        f"Done: wrote index.html, deals.html, dailys.html, and {deal_count} "
-        f"deal page(s) to {website_dir}",
+        f"Done: wrote index.html, deals.html, portcos.html, dailys.html, "
+        f"{deal_count} deal page(s), and {portco_count} portco page(s) "
+        f"to {website_dir}",
         file=sys.stderr,
     )
 

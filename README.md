@@ -389,13 +389,13 @@ Creates `ai-generated/dailies/portcos/` if needed. Importable as `generate_daily
 
 ### `generate_website.py`
 
-Builds a static HTML site from `ai-generated/status.md`, daily activity JSON, and each deal's `ai-generated/summary.md`.
+Builds a static HTML site from `ai-generated/status.md`, daily activity JSON, each deal's `ai-generated/summary.md`, and each portco's `ai-generated/summary.md`.
 
 ```bash
 python generate_website.py
 ```
 
-**Output:** `website/index.html` and `website/{DealName}.html` under `WEBSITE_BASE`. Existing `.html` files in `website/` are removed first. Deals without a summary are skipped with a warning.
+**Output:** `website/index.html`, `website/deals.html`, `website/portcos.html`, `website/dailys.html`, and `website/{Name}.html` under `WEBSITE_BASE` for each deal/portco with a summary. Existing `.html` files in `website/` are removed first. Companies without a summary are skipped with a warning.
 
 **Requires:** `GOOGLE_DRIVE_BASE`, `WEBSITE_BASE` (run `summarizer.py` first)
 
