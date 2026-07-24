@@ -9,24 +9,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from fetch_transcripts import portcos_base
+from paths import portcos_base, resolve_portco_folder
 from process_deal import process_company_folder
 
 PORTCO_JSON_NAME = "portco.json"
 
-
-def resolve_portco_folder(relative_path: str) -> Path:
-    cleaned = relative_path.strip().lstrip("/")
-    if not cleaned:
-        raise ValueError("relative_path must be a non-empty portco folder name")
-
-    base = portcos_base()
-    folder = (base / cleaned).resolve()
-
-    if base not in folder.parents and folder != base:
-        raise ValueError(f"path escapes portcos root: {relative_path}")
-
-    return folder
+__all__ = ["PORTCO_JSON_NAME", "process_portco", "resolve_portco_folder"]
 
 
 def process_portco(relative_path: str) -> Path:
@@ -52,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "relative_path",
-        help="Folder name under the sibling portcos/ directory (e.g. Central-Agent)",
+        help="Folder name under portcos/ (e.g. Central-Agent)",
     )
     return parser.parse_args()
 

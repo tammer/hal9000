@@ -26,6 +26,7 @@ from meetgeek_client import (
     get_transcript,
     list_team_meetings,
 )
+from paths import facts_md, shared_ai_dir
 
 __all__ = ["meeting_roundup"]
 
@@ -62,15 +63,8 @@ and Alex would work on the investment memo for Trails.com
 """
 
 
-def resolve_google_drive_base() -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    return Path(base_raw).expanduser().resolve()
-
-
 def load_facts_md() -> str:
-    facts_path = resolve_google_drive_base().parent / "facts.md"
+    facts_path = facts_md()
     if not facts_path.is_file():
         raise FileNotFoundError(f"facts.md not found at {facts_path}")
     return facts_path.read_text(encoding="utf-8").strip()
@@ -269,9 +263,7 @@ def main() -> int:
     try:
         day = parse_day(args.date) if args.date is not None else default_date()
         results = meeting_roundup(day)
-        output_dir = (
-            resolve_google_drive_base() / "ai-generated" / "dailies" / "meetgeeks"
-        )
+        output_dir = shared_ai_dir() / "dailies" / "meetgeeks"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{day.isoformat()}.json"
         output_path.write_text(

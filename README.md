@@ -23,7 +23,7 @@ python run_pipeline.py
 
 | Variable | Required by | Description |
 |----------|-------------|-------------|
-| `GOOGLE_DRIVE_BASE` | Most scripts | Root directory containing one subfolder per deal |
+| `GOOGLE_DRIVE_BASE` | Most scripts | Canada shared-drive root containing `deals/`, `portcos/`, `ai-generated/`, and `facts.md` |
 | `WEBSITE_BASE` | `generate_website.py` | Parent directory where `website/` output is written |
 | `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `daily_summary.py`, `daily_summary_portco.py`, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
 | `GROQ_MODEL` | Optional | Groq model (default: `llama-3.3-70b-versatile`) |
@@ -38,29 +38,48 @@ python run_pipeline.py
 | `MAIL_PASSWORD` | `process_emails.py` | Mailbox password |
 | `BRAVE_SEARCH_API_KEY` | `get_facts.py`, `researcher.py` | Brave Search API key |
 
-## Deal folder layout
+## Drive layout
 
-Each deal lives in a subfolder of `GOOGLE_DRIVE_BASE`:
+`GOOGLE_DRIVE_BASE` is the Canada shared-drive root. Deals and portcos are peer trees; shared pipeline outputs live under `ai-generated/`.
 
 ```
-GOOGLE_DRIVE_BASE/
-├── status.md                    # portfolio table (written by summarizer.py)
-├── Mobi/
-│   ├── pitch-deck.pdf           # source documents (top-level files)
-│   ├── contents.json            # optional file index (generate_contents.py)
-│   ├── emails/
-│   │   └── email_20260710_143000_Subject.txt  # emails saved by process_emails.py
-│   ├── transcripts/
-│   │   └── Meeting+Title_sentences_2026-07-10.txt  # MeetGeek transcripts
-│   └── ai-generated/
-│       ├── summary.md           # Claude investment summary
-│       └── deal.html            # optional (main.py)
-└── ...
+GOOGLE_DRIVE_BASE/                 # …/Shared drives/Canada
+├── facts.md                       # team context for meeting_roundup.py
+├── people/                        # ignored by tooling
+├── ai-generated/                  # shared outputs
+│   ├── status.md                  # portfolio table (summarizer.py)
+│   └── dailies/
+│       ├── deals/YYYY-MM-DD.json
+│       ├── portcos/YYYY-MM-DD.json
+│       └── meetgeeks/YYYY-MM-DD.json
+├── deals/
+│   └── Mobi/
+│       ├── pitch-deck.pdf         # source documents (top-level files)
+│       ├── contents.json          # optional file index (generate_contents.py)
+│       ├── emails/
+│       │   └── email_20260710_143000_Subject.txt
+│       ├── transcripts/
+│       │   └── Meeting+Title_sentences_2026-07-10.txt
+│       └── ai-generated/
+│           ├── deal.json
+│           ├── summary.md
+│           └── deal.html          # optional (main.py)
+└── portcos/
+    └── Central-Agent/
+        ├── emails/
+        ├── transcripts/
+        └── ai-generated/
+            ├── portco.json
+            └── summary.md
 ```
 
-Most scripts read **top-level files only** in each deal folder (not recursive). Supported formats include `.txt`, `.md`, `.pdf`, `.docx`, and other text-readable files. Claude summary scripts also read files under `emails/` and `transcripts/`.
+Most scripts read **top-level files only** in each company folder (not recursive). Supported formats include `.txt`, `.md`, `.pdf`, `.docx`, and other text-readable files. Claude summary scripts also read files under `emails/` and `transcripts/`.
 
-Many commands take a `relative_path` argument: the path under `GOOGLE_DRIVE_BASE`. For a top-level deal folder, this is just the folder name (e.g. `Mobi`).
+**CLI path conventions:**
+
+- Deal scripts (`process_deal.py`, `claude_summary2.py`, …): folder name under `deals/` (e.g. `Mobi`)
+- Portco scripts (`process_portco.py`, `generate_portco_report.py`): folder name under `portcos/` (e.g. `Central-Agent`)
+- Ingest CLIs (`fetch_transcripts.py`): `deals/<folder>` or `portcos/<folder>`
 
 ---
 
@@ -82,7 +101,7 @@ python run_pipeline.py [options]
 4. **Claude summaries** — `claude_summary2.py` for every deal folder
 5. **Process portcos** — `process_portco.py` for every portco folder
 6. **Daily summary** — `daily_summary.py` then `daily_summary_portco.py`
-7. **Summarizer** — `summarizer.py` (builds `status.md`)
+7. **Summarizer** — `summarizer.py` (builds `ai-generated/status.md`)
 8. **Website** — `generate_website.py`
 9. **Deploy** — `website_deploy.py`
 
@@ -127,7 +146,7 @@ Before Claude summaries, the pipeline scans deal folders and prints notes for em
 
 ### `fetch_all_transcripts.py`
 
-Fetches team MeetGeek meetings since a cutoff date, matches each meeting to a folder under `GOOGLE_DRIVE_BASE` (deals) or its sibling `portcos/` using an LLM, and writes relevant transcripts.
+Fetches team MeetGeek meetings since a cutoff date, matches each meeting to a folder under `deals/` or `portcos/` using an LLM, and writes relevant transcripts.
 
 ```bash
 python fetch_all_transcripts.py [--cutoff-date DATE] [--dry-run]
@@ -167,7 +186,7 @@ Uses documents to extract company/people identity, then scores each recent meeti
 
 ### `process_emails.py`
 
-Fetches unread inbox mail, matches each message to a folder under `GOOGLE_DRIVE_BASE` (deals) or its sibling `portcos/` with an LLM, and saves it as a `.txt` file. Successfully written messages are marked as read.
+Fetches unread inbox mail, matches each message to a folder under `deals/` or `portcos/` with an LLM, and saves it as a `.txt` file. Successfully written messages are marked as read.
 
 ```bash
 python process_emails.py [--dry-run]
@@ -203,7 +222,7 @@ python process_deal.py Mobi
 
 ### `process_portco.py`
 
-Same as `process_deal.py`, but for a portfolio-company folder under the sibling `portcos/` directory. Writes `ai-generated/portco.json`.
+Same as `process_deal.py`, but for a portfolio-company folder under `portcos/`. Writes `ai-generated/portco.json`.
 
 ```bash
 python process_portco.py <folder>
@@ -266,7 +285,7 @@ python claude_summary2.py <relative_path> [--dry-run]
 
 ### `generate_portco_report.py`
 
-Same flow as `claude_summary2.py` for a portfolio company under sibling `portcos/`: refreshes `portco.json`, then writes `ai-generated/summary.md` using `portco_report_prompt.md`.
+Same flow as `claude_summary2.py` for a portfolio company under `portcos/`: refreshes `portco.json`, then writes `ai-generated/summary.md` using `portco_report_prompt.md`.
 
 ```bash
 python generate_portco_report.py <folder> [--dry-run]
@@ -292,7 +311,7 @@ Reads every deal's `ai-generated/summary.md`, extracts structured fields (produc
 python summarizer.py
 ```
 
-**Output:** `status.md` at the root of `GOOGLE_DRIVE_BASE`.
+**Output:** `GOOGLE_DRIVE_BASE/ai-generated/status.md`.
 
 Deals without a summary are skipped. Failures for individual deals are logged as warnings; the script still writes the table for successful extractions.
 
@@ -302,7 +321,7 @@ Deals without a summary are skipped. Failures for individual deals are logged as
 
 ### `daily_summary.py`
 
-For each deal folder under `GOOGLE_DRIVE_BASE`, reads `ai-generated/deal.json`, keeps only entries whose `created_at` calendar date matches the given day, and asks Groq to infer what happened with that deal. Deals with no matching entries are omitted.
+For each deal folder under `GOOGLE_DRIVE_BASE/deals/`, reads `ai-generated/deal.json`, keeps only entries whose `created_at` calendar date matches the given day, and asks Groq to infer what happened with that deal. Deals with no matching entries are omitted.
 
 ```bash
 python daily_summary.py [YYYY-MM-DD]
@@ -336,7 +355,7 @@ Creates `ai-generated/dailies/deals/` if needed. Importable as `generate_daily_s
 
 ### `daily_summary_portco.py`
 
-Same as `daily_summary.py`, but for portfolio-company folders under the sibling `portcos/` directory. Reads each folder's `ai-generated/portco.json` and writes under `ai-generated/dailies/portcos/`. Portcos with no matching entries are omitted. If the portcos root is missing, prints a warning and writes an empty list.
+Same as `daily_summary.py`, but for portfolio-company folders under `portcos/`. Reads each folder's `ai-generated/portco.json` and writes under `ai-generated/dailies/portcos/`. Portcos with no matching entries are omitted. If the portcos root is missing, prints a warning and writes an empty list.
 
 ```bash
 python daily_summary_portco.py [YYYY-MM-DD]
@@ -370,7 +389,7 @@ Creates `ai-generated/dailies/portcos/` if needed. Importable as `generate_daily
 
 ### `generate_website.py`
 
-Builds a static HTML site from `status.md` and each deal's `ai-generated/summary.md`.
+Builds a static HTML site from `ai-generated/status.md`, daily activity JSON, and each deal's `ai-generated/summary.md`.
 
 ```bash
 python generate_website.py

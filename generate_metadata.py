@@ -125,10 +125,9 @@ def resolve_file_path(
     base: Path | None = None,
 ) -> Path:
     if base is None:
-        base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-        if not base_raw:
-            raise ValueError("GOOGLE_DRIVE_BASE is not set")
-        resolved_base = Path(base_raw).resolve()
+        from paths import deals_base
+
+        resolved_base = deals_base()
     else:
         resolved_base = base.resolve()
 
@@ -273,12 +272,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Generate Claude metadata (creator, dates, summaries) for a single "
-            "file under GOOGLE_DRIVE_BASE and print JSON."
+            "file under deals/ (or pass base= for portcos) and print JSON."
         )
     )
     parser.add_argument(
         "relative_path",
-        help="Relative path under GOOGLE_DRIVE_BASE to the file",
+        help="Relative path under deals/ to the file (e.g. Mobi/emails/note.txt)",
     )
     return parser.parse_args()
 

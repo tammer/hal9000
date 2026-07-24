@@ -47,7 +47,7 @@ def main() -> int:
     load_dotenv()
     args = parse_relative_path_args(
         "Generate a portfolio-company report from ai-generated/portco.json using Claude.",
-        "Folder name under the sibling portcos/ directory (e.g. Central-Agent)",
+        "Folder name under portcos/ (e.g. Central-Agent)",
         with_dry_run=True,
     )
     return run_json_report(

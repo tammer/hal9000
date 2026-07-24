@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 from claude_common import resolve_folder_path
 from consolidator import DATETIME_FMT, file_mtime
 from document_utils import FORBIDDEN_DIR_NAMES, list_candidate_files
-from fetch_transcripts import deals_base
 from generate_metadata import generate_metadata
+from paths import deals_base
 
 DEAL_JSON_NAME = "deal.json"
 
@@ -176,7 +176,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "relative_path",
-        help="Relative path under GOOGLE_DRIVE_BASE to the deal folder",
+        help="Folder name under deals/ (e.g. Mobi)",
     )
     return parser.parse_args()
 

@@ -10,8 +10,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from document_utils import collect_documents
-from fetch_all_transcripts import deals_base, folder_has_any_files
-from fetch_transcripts import portcos_base
+from fetch_all_transcripts import folder_has_any_files
+from paths import deals_base, list_company_folders, portcos_base
 
 REPO_ROOT = Path(__file__).parent
 
@@ -47,13 +47,7 @@ class PipelineResults:
 
 
 def list_deal_folders(base: Path) -> list[Path]:
-    return sorted(
-        entry
-        for entry in base.iterdir()
-        if entry.is_dir()
-        and not entry.name.startswith(".")
-        and entry.name != "ai-generated"
-    )
+    return list_company_folders(base)
 
 
 def print_banner(step: int, total: int, title: str) -> None:
@@ -280,7 +274,7 @@ def main() -> int:
         return 1
 
     if not base.is_dir():
-        print(f"Error: GOOGLE_DRIVE_BASE is not a directory: {base}", file=sys.stderr)
+        print(f"Error: deals base is not a directory: {base}", file=sys.stderr)
         return 1
 
     # Step 1: Fetch transcripts

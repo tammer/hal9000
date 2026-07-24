@@ -331,7 +331,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "relative_path",
-        help="Relative path under GOOGLE_DRIVE_BASE to the deal folder",
+        help="Folder name under deals/ (e.g. Mobi)",
     )
     return parser.parse_args()
 

@@ -63,16 +63,9 @@ def build_payload(documents: list[tuple[Path, str]]) -> str:
 
 
 def resolve_folder_path(relative_path: str) -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    base = Path(base_raw).resolve()
-    folder = (base / relative_path.lstrip("/")).resolve()
+    from paths import resolve_deal_folder
 
-    if base not in folder.parents and folder != base:
-        raise ValueError(f"path escapes Google Drive root: {relative_path}")
-
-    return folder
+    return resolve_deal_folder(relative_path)
 
 
 def load_prompt_file(path: Path) -> str:

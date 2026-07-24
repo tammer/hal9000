@@ -14,22 +14,13 @@ from typing import Any
 from dotenv import load_dotenv
 
 from html_utils import load_styles, markdown_to_html
+from paths import deals_base, list_company_folders, shared_ai_dir
 
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|\s*$")
 DAILY_JSON_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
 MEETGEEK_MET_RE = re.compile(r"^(.*?)\bmet\b", re.IGNORECASE)
 MEETGEEK_MEETING_URL = "https://app.meetgeek.ai/meeting/{meeting_id}"
-
-
-def resolve_google_drive_base() -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError(
-            "GOOGLE_DRIVE_BASE is not set. "
-            "Set it to the root directory containing deal folders and ai-generated/status.md."
-        )
-    return Path(base_raw).expanduser().resolve()
 
 
 def resolve_website_dir() -> Path:
@@ -40,16 +31,6 @@ def resolve_website_dir() -> Path:
             "Set it to the parent directory where the website/ output folder should be created."
         )
     return Path(base_raw).expanduser().resolve() / "website"
-
-
-def list_deal_folders(base: Path) -> list[Path]:
-    return sorted(
-        entry
-        for entry in base.iterdir()
-        if entry.is_dir()
-        and not entry.name.startswith(".")
-        and entry.name != "ai-generated"
-    )
 
 
 def summary_path_for_deal(deal_folder: Path) -> Path:
@@ -205,11 +186,10 @@ def generate_deal_pages(
 
 
 def generate_deals_page(
-    base: Path,
     website_dir: Path,
     linked_deal_names: set[str],
 ) -> None:
-    status_path = base / "ai-generated" / "status.md"
+    status_path = shared_ai_dir() / "status.md"
     if not status_path.is_file():
         raise FileNotFoundError(
             f"status.md not found at {status_path}. Run summarizer.py first."
@@ -402,13 +382,13 @@ def render_daily_summaries_html(
 
 
 def generate_dailys_page(
-    base: Path,
     website_dir: Path,
     linked_deal_names: set[str],
 ) -> None:
-    deals_dir = base / "ai-generated" / "dailies" / "deals"
-    meetgeeks_dir = base / "ai-generated" / "dailies" / "meetgeeks"
-    portcos_dir = base / "ai-generated" / "dailies" / "portcos"
+    ai_dir = shared_ai_dir()
+    deals_dir = ai_dir / "dailies" / "deals"
+    meetgeeks_dir = ai_dir / "dailies" / "meetgeeks"
+    portcos_dir = ai_dir / "dailies" / "portcos"
     days = list_recent_daily_days(deals_dir, meetgeeks_dir, portcos_dir, limit=5)
     body_html = render_daily_summaries_html(days, linked_deal_names)
     document_html = build_website_page(
@@ -453,14 +433,14 @@ def main() -> int:
     load_dotenv()
 
     try:
-        base = resolve_google_drive_base()
+        base = deals_base()
         website_dir = resolve_website_dir()
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     if not base.is_dir():
-        print(f"Error: GOOGLE_DRIVE_BASE is not a directory: {base}", file=sys.stderr)
+        print(f"Error: deals base is not a directory: {base}", file=sys.stderr)
         return 1
 
     website_dir.mkdir(parents=True, exist_ok=True)
@@ -469,16 +449,16 @@ def main() -> int:
     if removed:
         print(f"Removed {removed} existing HTML file(s)", file=sys.stderr)
 
-    deal_folders = list_deal_folders(base)
+    deal_folders = list_company_folders(base)
     linked_deal_names, deal_count = generate_deal_pages(deal_folders, website_dir)
 
     try:
-        generate_deals_page(base, website_dir, linked_deal_names)
+        generate_deals_page(website_dir, linked_deal_names)
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    generate_dailys_page(base, website_dir, linked_deal_names)
+    generate_dailys_page(website_dir, linked_deal_names)
     generate_index_page(website_dir)
 
     print(

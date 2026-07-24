@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from groq import Groq
 
 from consolidator import DATETIME_FMT
+from paths import deals_base, list_company_folders, shared_ai_dir
 
 __all__ = ["generate_daily_summary"]
 
@@ -67,23 +68,6 @@ def resolve_day(day: date | str) -> date:
     if isinstance(day, date):
         return day
     return parse_day(day)
-
-
-def resolve_google_drive_base() -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    return Path(base_raw).expanduser().resolve()
-
-
-def list_deal_folders(base: Path) -> list[Path]:
-    return sorted(
-        entry
-        for entry in base.iterdir()
-        if entry.is_dir()
-        and not entry.name.startswith(".")
-        and entry.name != "ai-generated"
-    )
 
 
 def deal_json_path(folder: Path) -> Path:
@@ -184,15 +168,15 @@ def generate_daily_summary(day: date | str) -> list[dict[str, str]]:
     if not api_key:
         raise ValueError("GROQ_API_KEY is not set")
 
-    base = resolve_google_drive_base()
+    base = deals_base()
     if not base.is_dir():
-        raise NotADirectoryError(f"GOOGLE_DRIVE_BASE is not a directory: {base}")
+        raise NotADirectoryError(f"deals base is not a directory: {base}")
 
     model = os.getenv("GROQ_MODEL", DEFAULT_MODEL)
     day_label = resolved.isoformat()
     results: list[dict[str, str]] = []
 
-    for folder in list_deal_folders(base):
+    for folder in list_company_folders(base):
         deal_name = folder.name
         path = deal_json_path(folder)
         entries = load_deal_entries(path)
@@ -255,7 +239,7 @@ def main() -> int:
     try:
         day = parse_day(args.date) if args.date is not None else default_date()
         results = generate_daily_summary(day)
-        output_dir = resolve_google_drive_base() / "ai-generated" / "dailies" / "deals"
+        output_dir = shared_ai_dir() / "dailies" / "deals"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{day.isoformat()}.json"
         output_path.write_text(

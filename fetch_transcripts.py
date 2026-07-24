@@ -22,8 +22,11 @@ from meetgeek_client import (
     get_transcript,
     list_recent_meetings,
 )
-
-COMPANY_ROOTS = frozenset({"deals", "portcos"})
+from paths import (
+    deals_base,
+    portcos_base,
+    resolve_company_folder as resolve_company_folder_path,
+)
 
 LOOKBACK_DAYS = 8
 MAX_DEAL_DOC_CHARS = 100_000
@@ -159,42 +162,6 @@ class MeetingOutcome:
     date_label: str
     filename: str | None = None
     reason: str = ""
-
-
-def deals_base() -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    return Path(base_raw).resolve()
-
-
-def portcos_base() -> Path:
-    return deals_base().parent / "portcos"
-
-
-def resolve_company_folder_path(relative_path: str) -> Path:
-    """Resolve ``deals/<folder>`` or ``portcos/<folder>`` to an absolute path."""
-    cleaned = relative_path.strip().lstrip("/")
-    parts = Path(cleaned).parts
-    if not parts or parts[0] not in COMPANY_ROOTS:
-        raise ValueError(
-            "path must start with 'deals/' or 'portcos/' "
-            f"(e.g. deals/Tony or portcos/Central-Agent); got {relative_path!r}"
-        )
-    if len(parts) < 2:
-        raise ValueError(
-            f"path must include a folder under {parts[0]}/; got {relative_path!r}"
-        )
-
-    root = parts[0]
-    rest = Path(*parts[1:])
-    base = deals_base() if root == "deals" else portcos_base()
-    folder = (base / rest).resolve()
-
-    if base not in folder.parents and folder != base:
-        raise ValueError(f"path escapes {root} root: {relative_path}")
-
-    return folder
 
 
 def load_processed_meeting_ids(

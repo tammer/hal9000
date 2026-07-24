@@ -23,14 +23,12 @@ from daily_summary import (
     DEFAULT_MODEL,
     default_date,
     filter_entries_for_day,
-    list_deal_folders,
     load_deal_entries,
     parse_day,
     resolve_day,
-    resolve_google_drive_base,
     strip_claude_stats,
 )
-from fetch_transcripts import portcos_base
+from paths import list_company_folders, portcos_base, shared_ai_dir
 from process_portco import PORTCO_JSON_NAME
 
 __all__ = ["generate_daily_summary_portco"]
@@ -119,7 +117,7 @@ def generate_daily_summary_portco(day: date | str) -> list[dict[str, str]]:
     day_label = resolved.isoformat()
     results: list[dict[str, str]] = []
 
-    for folder in list_deal_folders(base):
+    for folder in list_company_folders(base):
         portco_name = folder.name
         path = portco_json_path(folder)
         entries = load_deal_entries(path)
@@ -182,9 +180,7 @@ def main() -> int:
     try:
         day = parse_day(args.date) if args.date is not None else default_date()
         results = generate_daily_summary_portco(day)
-        output_dir = (
-            resolve_google_drive_base() / "ai-generated" / "dailies" / "portcos"
-        )
+        output_dir = shared_ai_dir() / "dailies" / "portcos"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{day.isoformat()}.json"
         output_path.write_text(

@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from groq import Groq
 
 from get_facts import parse_json_response
+from paths import deals_base, list_company_folders, shared_ai_dir
 
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
@@ -36,23 +37,6 @@ class DealRow:
     product: str
     founders: str
     status: str
-
-
-def resolve_google_drive_base() -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    return Path(base_raw).expanduser().resolve()
-
-
-def list_deal_folders(base: Path) -> list[Path]:
-    return sorted(
-        entry
-        for entry in base.iterdir()
-        if entry.is_dir()
-        and not entry.name.startswith(".")
-        and entry.name != "ai-generated"
-    )
 
 
 def summary_path_for_deal(deal_folder: Path) -> Path:
@@ -110,13 +94,13 @@ def main() -> int:
     load_dotenv()
 
     try:
-        base = resolve_google_drive_base()
+        base = deals_base()
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     if not base.is_dir():
-        print(f"Error: GOOGLE_DRIVE_BASE is not a directory: {base}", file=sys.stderr)
+        print(f"Error: deals base is not a directory: {base}", file=sys.stderr)
         return 1
 
     api_key = os.getenv("GROQ_API_KEY")
@@ -128,7 +112,7 @@ def main() -> int:
     client = Groq(api_key=api_key)
 
     rows: list[DealRow] = []
-    for deal_folder in list_deal_folders(base):
+    for deal_folder in list_company_folders(base):
         summary_path = summary_path_for_deal(deal_folder)
         if not summary_path.is_file():
             continue
@@ -145,7 +129,7 @@ def main() -> int:
             )
 
     rows.sort(key=lambda row: row.deal_name.lower())
-    output_path = base / "ai-generated" / "status.md"
+    output_path = shared_ai_dir() / "status.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_status_table(rows), encoding="utf-8")
     print(f"Wrote {output_path} ({len(rows)} deals)", file=sys.stderr)

@@ -49,11 +49,9 @@ Hard rules:
 
 
 def resolve_status_path() -> Path:
-    base_raw = os.getenv("GOOGLE_DRIVE_BASE")
-    if not base_raw:
-        raise ValueError("GOOGLE_DRIVE_BASE is not set")
-    base = Path(base_raw).expanduser().resolve()
-    status_path = base / "status.md"
+    from paths import shared_ai_dir
+
+    status_path = shared_ai_dir() / "status.md"
     if not status_path.is_file():
         raise FileNotFoundError(
             f"status.md not found at {status_path}. Run summarizer.py first."
