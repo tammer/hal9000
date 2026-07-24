@@ -5,6 +5,7 @@ import argparse
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,6 +15,26 @@ from fetch_all_transcripts import folder_has_any_files
 from paths import deals_base, list_company_folders, portcos_base
 
 REPO_ROOT = Path(__file__).parent
+
+
+def default_pipeline_day() -> date:
+    """Yesterday before 16:30 local time; today at or after 16:30."""
+    now = datetime.now()
+    cutoff = now.replace(hour=16, minute=30, second=0, microsecond=0)
+    if now >= cutoff:
+        return now.date()
+    return now.date() - timedelta(days=1)
+
+
+def resolve_pipeline_day(day_arg: str | None) -> date:
+    """Resolve --day today|yesterday, or the 16:30 local default when omitted."""
+    if day_arg is None:
+        return default_pipeline_day()
+    if day_arg == "today":
+        return date.today()
+    if day_arg == "yesterday":
+        return date.today() - timedelta(days=1)
+    raise ValueError(f"invalid --day {day_arg!r}; expected today or yesterday")
 
 
 @dataclass
@@ -228,9 +249,20 @@ def parse_args() -> argparse.Namespace:
         help="Pass through to fetch_all_transcripts and process_emails.",
     )
     parser.add_argument(
+        "--day",
+        choices=("today", "yesterday"),
+        help=(
+            "Target calendar day for fetch cutoff, meeting roundup, and daily "
+            "summaries. Default: yesterday before 16:30 local, otherwise today."
+        ),
+    )
+    parser.add_argument(
         "--cutoff-date",
         metavar="DATE",
-        help="Pass through to fetch_all_transcripts (YYYY-MM-DD).",
+        help=(
+            "Override fetch cutoff (YYYY-MM-DD). "
+            "Default: the resolved --day value."
+        ),
     )
     parser.add_argument("--skip-fetch", action="store_true", help="Skip step 1.")
     parser.add_argument("--skip-emails", action="store_true", help="Skip step 2.")
@@ -268,6 +300,17 @@ def main() -> int:
     total_steps = 9
 
     try:
+        pipeline_day = resolve_pipeline_day(args.day)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    day_str = pipeline_day.isoformat()
+    fetch_cutoff = args.cutoff_date or day_str
+    print(f"Pipeline day: {day_str}", file=sys.stderr)
+    if args.cutoff_date:
+        print(f"Fetch cutoff override: {fetch_cutoff}", file=sys.stderr)
+
+    try:
         base = deals_base()
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -283,9 +326,7 @@ def main() -> int:
             print("Skipping fetch (declined)", file=sys.stderr)
         else:
             print_banner(1, total_steps, "Fetch transcripts")
-            fetch_args: list[str] = []
-            if args.cutoff_date:
-                fetch_args.extend(["--cutoff-date", args.cutoff_date])
+            fetch_args: list[str] = ["--cutoff-date", fetch_cutoff]
             if args.dry_run:
                 fetch_args.append("--dry-run")
 
@@ -325,7 +366,7 @@ def main() -> int:
             print("Skipping meeting roundup (declined)", file=sys.stderr)
         else:
             print_banner(3, total_steps, "Meeting roundup")
-            completed = run_script("meeting_roundup.py")
+            completed = run_script("meeting_roundup.py", day_str)
             if completed.returncode != 0:
                 results.meeting_roundup = "FAILED"
                 results.failed_steps.append("meeting_roundup")
@@ -389,13 +430,13 @@ def main() -> int:
             print("Skipping daily summary (declined)", file=sys.stderr)
         else:
             print_banner(6, total_steps, "Daily summary")
-            completed = run_script("daily_summary.py")
+            completed = run_script("daily_summary.py", day_str)
             if completed.returncode != 0:
                 results.daily_summary = "FAILED"
                 results.failed_steps.append("daily_summary")
                 print_pipeline_summary(results)
                 return completed.returncode
-            completed = run_script("daily_summary_portco.py")
+            completed = run_script("daily_summary_portco.py", day_str)
             if completed.returncode != 0:
                 results.daily_summary = "FAILED"
                 results.failed_steps.append("daily_summary")

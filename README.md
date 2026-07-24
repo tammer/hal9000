@@ -109,8 +109,9 @@ python run_pipeline.py [options]
 
 | Flag | Description |
 |------|-------------|
+| `--day {today,yesterday}` | Target calendar day for fetch cutoff, meeting roundup, and daily summaries. Default: yesterday before 16:30 local, otherwise today |
 | `--dry-run` | Pass through to fetch and email steps; no files written, emails not marked read |
-| `--cutoff-date DATE` | Pass through to fetch step (`YYYY-MM-DD`) |
+| `--cutoff-date DATE` | Override fetch cutoff (`YYYY-MM-DD`). Default: the resolved `--day` value |
 | `--skip-fetch` | Skip step 1 |
 | `--skip-emails` | Skip step 2 |
 | `--skip-meeting-roundup` | Skip step 3 |
@@ -125,8 +126,12 @@ python run_pipeline.py [options]
 **Examples:**
 
 ```bash
-# Full pipeline
+# Full pipeline (day chosen by 16:30 local rule)
 python run_pipeline.py
+
+# Explicitly run for today or yesterday
+python run_pipeline.py --day today
+python run_pipeline.py --day yesterday
 
 # Preview ingest steps without writing
 python run_pipeline.py --dry-run
@@ -134,8 +139,8 @@ python run_pipeline.py --dry-run
 # Rebuild summaries and website only
 python run_pipeline.py --skip-fetch --skip-emails
 
-# Fetch transcripts since a specific date
-python run_pipeline.py --cutoff-date 2026-07-01
+# Summaries for yesterday, but fetch since an earlier cutoff
+python run_pipeline.py --day yesterday --cutoff-date 2026-07-01
 ```
 
 Before Claude summaries, the pipeline scans deal folders and prints notes for empty folders or folders with no readable source documents.
