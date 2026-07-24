@@ -399,6 +399,12 @@ def main() -> int:
                 results.failed_steps.append("daily_summary")
                 print_pipeline_summary(results)
                 return completed.returncode
+            completed = run_script("daily_summary_portco.py")
+            if completed.returncode != 0:
+                results.daily_summary = "FAILED"
+                results.failed_steps.append("daily_summary")
+                print_pipeline_summary(results)
+                return completed.returncode
             results.daily_summary = "OK"
     else:
         print("Skipping daily summary (--skip-daily-summary)", file=sys.stderr)

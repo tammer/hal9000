@@ -246,13 +246,17 @@ def dated_json_paths(dailies_dir: Path) -> dict[str, Path]:
 def list_recent_daily_days(
     deals_dir: Path,
     meetgeeks_dir: Path,
+    portcos_dir: Path,
     limit: int = 5,
-) -> list[tuple[str, Path | None, Path | None]]:
-    """Return up to ``limit`` recent days with deal and/or meetgeek JSON paths."""
+) -> list[tuple[str, Path | None, Path | None, Path | None]]:
+    """Return up to ``limit`` recent days with deal/meetgeek/portco JSON paths."""
     deals = dated_json_paths(deals_dir)
     meetgeeks = dated_json_paths(meetgeeks_dir)
-    days = sorted(set(deals) | set(meetgeeks), reverse=True)[:limit]
-    return [(day, deals.get(day), meetgeeks.get(day)) for day in days]
+    portcos = dated_json_paths(portcos_dir)
+    days = sorted(set(deals) | set(meetgeeks) | set(portcos), reverse=True)[:limit]
+    return [
+        (day, deals.get(day), meetgeeks.get(day), portcos.get(day)) for day in days
+    ]
 
 
 def load_json_list(path: Path) -> list[Any] | None:
@@ -295,6 +299,23 @@ def render_deals_section(
     return "<h2>Deals</h2>\n" + "\n".join(parts)
 
 
+def render_portcos_section(items: list[Any]) -> str | None:
+    parts: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        portco = item.get("portco")
+        summary = item.get("summary")
+        if not isinstance(portco, str) or not isinstance(summary, str):
+            continue
+        parts.append(f"<h3>{html.escape(portco)}</h3>")
+        parts.append(f"<p>{html.escape(summary)}</p>")
+
+    if not parts:
+        return None
+    return "<h2>Portcos</h2>\n" + "\n".join(parts)
+
+
 def link_meetgeek_summary(summary: str, meeting_id: str) -> str:
     """Link the opening through the first 'met' to the MeetGeek meeting page."""
     href = html.escape(
@@ -334,14 +355,14 @@ def render_meetgeeks_section(items: list[Any]) -> str | None:
 
 
 def render_daily_summaries_html(
-    days: list[tuple[str, Path | None, Path | None]],
+    days: list[tuple[str, Path | None, Path | None, Path | None]],
     linked_deal_names: set[str],
 ) -> str:
     if not days:
         return "<p>No daily summaries yet.</p>"
 
     sections: list[str] = []
-    for day_str, deals_path, meetgeeks_path in days:
+    for day_str, deals_path, meetgeeks_path, portcos_path in days:
         day = date.fromisoformat(day_str)
         day_label = f"{day.strftime('%A, %B')} {day.day}"
 
@@ -354,6 +375,14 @@ def render_daily_summaries_html(
                 deals_html = render_deals_section(raw, linked_deal_names)
                 if deals_html is not None:
                     parts.append(deals_html)
+                    has_content = True
+
+        if portcos_path is not None:
+            raw = load_json_list(portcos_path)
+            if raw is not None:
+                portcos_html = render_portcos_section(raw)
+                if portcos_html is not None:
+                    parts.append(portcos_html)
                     has_content = True
 
         if meetgeeks_path is not None:
@@ -379,7 +408,8 @@ def generate_dailys_page(
 ) -> None:
     deals_dir = base / "ai-generated" / "dailies" / "deals"
     meetgeeks_dir = base / "ai-generated" / "dailies" / "meetgeeks"
-    days = list_recent_daily_days(deals_dir, meetgeeks_dir, limit=5)
+    portcos_dir = base / "ai-generated" / "dailies" / "portcos"
+    days = list_recent_daily_days(deals_dir, meetgeeks_dir, portcos_dir, limit=5)
     body_html = render_daily_summaries_html(days, linked_deal_names)
     document_html = build_website_page(
         "Daily Summaries",

@@ -25,7 +25,7 @@ python run_pipeline.py
 |----------|-------------|-------------|
 | `GOOGLE_DRIVE_BASE` | Most scripts | Root directory containing one subfolder per deal |
 | `WEBSITE_BASE` | `generate_website.py` | Parent directory where `website/` output is written |
-| `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `daily_summary.py`, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
+| `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `daily_summary.py`, `daily_summary_portco.py`, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
 | `GROQ_MODEL` | Optional | Groq model (default: `llama-3.3-70b-versatile`) |
 | `ANTHROPIC_API_KEY` | `claude_summary.py`, `chat.py`, `researcher.py` | Anthropic API key |
 | `ANTHROPIC_MODEL` | Optional | Default Anthropic model for `chat.py` |
@@ -81,7 +81,7 @@ python run_pipeline.py [options]
 3. **Meeting roundup** — `meeting_roundup.py`
 4. **Claude summaries** — `claude_summary2.py` for every deal folder
 5. **Process portcos** — `process_portco.py` for every portco folder
-6. **Daily summary** — `daily_summary.py`
+6. **Daily summary** — `daily_summary.py` then `daily_summary_portco.py`
 7. **Summarizer** — `summarizer.py` (builds `status.md`)
 8. **Website** — `generate_website.py`
 9. **Deploy** — `website_deploy.py`
@@ -331,6 +331,40 @@ python daily_summary.py 2026-07-17
 Creates `ai-generated/dailies/deals/` if needed. Importable as `generate_daily_summary(day)` (accepts a `date` or `YYYY-MM-DD` string; returns the list). Progress and the written path go to stderr.
 
 **Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE` (and existing `ai-generated/deal.json` files from `process_deal.py`)
+
+---
+
+### `daily_summary_portco.py`
+
+Same as `daily_summary.py`, but for portfolio-company folders under the sibling `portcos/` directory. Reads each folder's `ai-generated/portco.json` and writes under `ai-generated/dailies/portcos/`. Portcos with no matching entries are omitted. If the portcos root is missing, prints a warning and writes an empty list.
+
+```bash
+python daily_summary_portco.py [YYYY-MM-DD]
+```
+
+Date is optional; defaults to yesterday before 16:30 local, otherwise today (same as `daily_summary.py`).
+
+**Example:**
+
+```bash
+python daily_summary_portco.py
+python daily_summary_portco.py 2026-07-17
+```
+
+**Output:** writes `GOOGLE_DRIVE_BASE/ai-generated/dailies/portcos/YYYY-MM-DD.json`:
+
+```json
+[
+  {
+    "portco": "Central-Agent",
+    "summary": "Tammer and Alex met the team and talked about PMF"
+  }
+]
+```
+
+Creates `ai-generated/dailies/portcos/` if needed. Importable as `generate_daily_summary_portco(day)` (accepts a `date` or `YYYY-MM-DD` string; returns the list). Progress and the written path go to stderr.
+
+**Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE` (and existing `ai-generated/portco.json` files from `process_portco.py`)
 
 ---
 
