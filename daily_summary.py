@@ -21,6 +21,7 @@ from groq import Groq
 
 from consolidator import DATETIME_FMT
 from paths import deals_base, list_company_folders, shared_ai_dir
+from prompt_context import ORG_CONTEXT
 
 __all__ = ["generate_daily_summary"]
 
@@ -36,7 +37,9 @@ def default_date() -> date:
         return now.date()
     return now.date() - timedelta(days=1)
 
-SUMMARY_INSTRUCTIONS = """You infer what happened with a venture capital deal on a given day.
+SUMMARY_INSTRUCTIONS = f"""{ORG_CONTEXT}
+
+You infer what happened with a venture capital deal on a given day.
 
 You are given metadata entries (emails, transcripts, notes, etc.) whose created_at
 falls on that day. Write a single short paragraph summarizing what happened with
@@ -44,9 +47,6 @@ this deal that day.
 
 Rules:
 - Stick to facts supported by the entries; do not invent details.
-- For team members (Bernie, Tammer, Alex, Shambhavi, Daphne, Matt), use first names only
-  ("Alex" NOT "Alex Wright").
-- For everyone else, use full names when available.
 - Prefer concrete events: meetings held, emails sent, notes written, next steps.
 - If activity is thin, say so briefly based on what is present.
 - Output plain text only — no headings, bullets, or markdown.

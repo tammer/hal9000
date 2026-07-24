@@ -30,10 +30,13 @@ from daily_summary import (
 )
 from paths import list_company_folders, portcos_base, shared_ai_dir
 from process_portco import PORTCO_JSON_NAME
+from prompt_context import ORG_CONTEXT
 
 __all__ = ["generate_daily_summary_portco"]
 
-SUMMARY_INSTRUCTIONS = """You are an expert VC analyst working for us, Antler Canada. You infer what happened with a portfolio company on a given day.
+SUMMARY_INSTRUCTIONS = f"""{ORG_CONTEXT}
+
+You infer what happened with a portfolio company on a given day.
 
 You are given metadata entries (emails, transcripts, notes, etc.) whose created_at
 falls on that day. Write a single short paragraph summarizing what happened with
@@ -41,9 +44,6 @@ this portfolio company that day.
 
 Rules:
 - Stick to facts supported by the entries; do not invent details.
-- For team members (Bernie, Tammer, Alex, Shambhavi, Daphne, Matt), use first names only
-  ("Alex" NOT "Alex Wright").
-- For everyone else, use full names when available.
 - Prefer concrete events: meetings held, emails sent, notes written, next steps.
 - If activity is thin, say so briefly based on what is present.
 - Output plain text only — no headings, bullets, or markdown.

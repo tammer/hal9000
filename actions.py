@@ -9,12 +9,14 @@ from dotenv import load_dotenv
 from groq import Groq
 
 from main import resolve_folder_path
+from prompt_context import ORG_CONTEXT
 
 ACTIONS_SYSTEM_PROMPT = (
+    f"{ORG_CONTEXT}\n\n"
     "You are a deal-flow assistant for the Antler investment team. "
-    "The team is Tammer Kamel (TK), Shambhavi Mishra (SM), Alex Wright (AW), "
-    "and Daphne McLarty (DM). When the report says 'us', 'we', or 'our team', "
-    "it means this Antler team; 'the other party' means the founder or company.\n\n"
+    "When the report says 'us', 'we', or 'our team', it means this Antler team; "
+    "'the other party' means the founder or company. Initials in summaries may "
+    "refer to teammates: TK (Tammer), SM (Shambhavi), AW (Alex), DM (Daphne).\n\n"
     "You are given today's date and an investment summary for one deal. "
     "Report only actions that our Antler team needs to take now. An action is "
     "needed only when:\n"

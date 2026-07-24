@@ -27,27 +27,28 @@ from meetgeek_client import (
     list_team_meetings,
 )
 from paths import facts_md, shared_ai_dir
+from prompt_context import ORG_CONTEXT
 
 __all__ = ["meeting_roundup"]
 
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
-SUMMARY_INSTRUCTIONS = """You summarize meeting transcripts for a venture capital team.
+SUMMARY_INSTRUCTIONS = f"""{ORG_CONTEXT}
+
+You summarize meeting transcripts for the Antler team.
 
 Write a single paragraph of about 50 words covering:
 1. Who was in the meeting
-2. What type of meeting was it? It could be a) a meeting with a prospective or current investor in out fund,
+2. What type of meeting was it? It could be a) a meeting with a prospective or current investor in our fund,
 b) a meeting with a founder we could invest in, c) a meeting with a founder we have already invested in (a portco meeting)
 d) an internal meeting with some or all members of the team and no one else.
 e) some other type of meeting.
-2. What was discussed
-3. Any next steps
+3. What was discussed
+4. Any next steps
 
 Rules:
 - Stick to facts supported by the transcript; do not invent details.
 - Prefer speaker names from the transcript when available.
-- For team members (Bernie, Tammmer, Alex, Shambhavi, Daphne), just use our first names ("Alex" NOT "Alex Wright)
-- For everyone else, just full names.
 - If next steps are unclear, say so briefly.
 - Output plain text only — no headings, bullets, or markdown.
 
