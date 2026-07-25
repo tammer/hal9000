@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -290,12 +291,20 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ask yes/no before running each step.",
     )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Number of times to run the pipeline (default: 1). "
+            "For N > 1, sleep 1 hour between runs."
+        ),
+    )
     return parser.parse_args()
 
 
-def main() -> int:
-    load_dotenv()
-    args = parse_args()
+def run_pipeline_once(args: argparse.Namespace) -> int:
     results = PipelineResults()
     total_steps = 9
 
@@ -496,6 +505,33 @@ def main() -> int:
 
     print_pipeline_summary(results)
     return 1 if results.failed_steps else 0
+
+
+def main() -> int:
+    load_dotenv()
+    args = parse_args()
+
+    if args.runs < 1:
+        print("Error: --runs must be >= 1", file=sys.stderr)
+        return 1
+
+    exit_code = 0
+    for i in range(args.runs):
+        if args.runs > 1:
+            print(f"=== Pipeline run {i + 1}/{args.runs} ===", file=sys.stderr)
+        rc = run_pipeline_once(args)
+        if rc != 0:
+            exit_code = rc
+        if i < args.runs - 1:
+            next_run = datetime.now() + timedelta(hours=1)
+            print(
+                f"Sleeping 1 hour before next run "
+                f"(at {next_run.strftime('%Y-%m-%d %H:%M:%S')})...",
+                file=sys.stderr,
+            )
+            time.sleep(3600)
+
+    return exit_code
 
 
 if __name__ == "__main__":
