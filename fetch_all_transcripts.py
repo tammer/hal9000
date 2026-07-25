@@ -13,7 +13,8 @@ from dotenv import load_dotenv
 from fetch_transcripts import (
     DealIdentity,
     DealMatchTarget,
-    append_processed_meeting_id,
+    ProcessedMeetingRecord,
+    append_processed_meeting,
     build_deal_payload,
     collect_deal_context,
     deals_base,
@@ -23,6 +24,7 @@ from fetch_transcripts import (
     format_transcript_text,
     load_processed_meeting_ids,
     meeting_date_label,
+    migrate_processed_meetings_log,
     portcos_base,
     should_record_processed,
     transcript_basename,
@@ -199,7 +201,11 @@ def process_meeting(
 ) -> MeetingOutcome:
     meeting = get_meeting(meeting_id)
     sentences = get_transcript(meeting_id)
-    basename = transcript_basename(meeting.title, meeting.timestamp_start_utc)
+    basename = transcript_basename(
+        meeting.title,
+        meeting.timestamp_start_utc,
+        meeting.meeting_id,
+    )
     date_label = meeting_date_label(meeting.timestamp_start_utc)
 
     match = find_matching_deal(
@@ -227,7 +233,7 @@ def process_meeting(
             reason=f"Model returned unknown deal folder: {match.deal_folder}",
         )
 
-    existing = find_existing_transcript(deal.folder, basename, meeting.meeting_id)
+    existing = find_existing_transcript(deal.folder, meeting.meeting_id)
     if existing is not None:
         return MeetingOutcome(
             status="skipped",
@@ -384,6 +390,9 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    migrated = migrate_processed_meetings_log()
+    if migrated:
+        print(f"Migrated {migrated} legacy processed-meeting ID(s) to JSONL.")
     processed_ids = load_processed_meeting_ids()
 
     outcomes: list[MeetingOutcome] = []
@@ -393,7 +402,7 @@ def main() -> int:
                 status="already_processed",
                 title=summary.meeting_id,
                 date_label=meeting_date_label(summary.timestamp_start_utc),
-                reason="Meeting ID already in processed_meetgeek_meetings.txt.",
+                reason="Meeting ID already has a prior decision in processed_meetgeek_meetings.json.",
             )
             outcomes.append(outcome)
             print_outcome(outcome)
@@ -421,8 +430,15 @@ def main() -> int:
             )
 
         if not args.dry_run and should_record_processed(outcome.status):
-            append_processed_meeting_id(
-                summary.meeting_id,
+            append_processed_meeting(
+                ProcessedMeetingRecord(
+                    meeting_id=summary.meeting_id,
+                    decision=outcome.status,
+                    reason=outcome.reason or "unknown",
+                    deal_folder=outcome.deal_folder,
+                    title=outcome.title,
+                    date=outcome.date_label,
+                ),
                 known_ids=processed_ids,
             )
 

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,6 +38,9 @@ TRANSCRIPT_FILENAME_MARKER = "_sentences_"
 TRANSCRIPTS_DIR_NAME = "transcripts"
 
 PROCESSED_MEETINGS_PATH = (
+    Path(__file__).resolve().parent / "processed_meetgeek_meetings.json"
+)
+LEGACY_PROCESSED_MEETINGS_PATH = (
     Path(__file__).resolve().parent / "processed_meetgeek_meetings.txt"
 )
 RECORDABLE_PROCESSED_STATUSES = frozenset(
@@ -164,34 +168,153 @@ class MeetingOutcome:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class ProcessedMeetingRecord:
+    meeting_id: str
+    decision: str
+    reason: str
+    deal_folder: str | None
+    title: str
+    date: str
+
+
+def _legacy_processed_record(meeting_id: str) -> ProcessedMeetingRecord:
+    return ProcessedMeetingRecord(
+        meeting_id=meeting_id,
+        decision="unknown",
+        reason="unknown",
+        deal_folder="unknown",
+        title="unknown",
+        date="unknown",
+    )
+
+
+def _parse_processed_meeting_line(line: str) -> ProcessedMeetingRecord | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        meeting_id = str(payload.get("meeting_id", "")).strip()
+        if not meeting_id:
+            return None
+        deal_folder_raw = payload.get("deal_folder")
+        if deal_folder_raw is None:
+            deal_folder: str | None = None
+        else:
+            deal_folder = str(deal_folder_raw)
+        return ProcessedMeetingRecord(
+            meeting_id=meeting_id,
+            decision=str(payload.get("decision", "unknown")),
+            reason=str(payload.get("reason", "unknown")),
+            deal_folder=deal_folder,
+            title=str(payload.get("title", "unknown")),
+            date=str(payload.get("date", "unknown")),
+        )
+
+    meeting_id = stripped.split()[0]
+    if not meeting_id:
+        return None
+    return _legacy_processed_record(meeting_id)
+
+
+def load_processed_meeting_records(
+    path: Path = PROCESSED_MEETINGS_PATH,
+) -> list[ProcessedMeetingRecord]:
+    if not path.is_file():
+        return []
+    records: list[ProcessedMeetingRecord] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        record = _parse_processed_meeting_line(line)
+        if record is not None:
+            records.append(record)
+    return records
+
+
 def load_processed_meeting_ids(
     path: Path = PROCESSED_MEETINGS_PATH,
 ) -> set[str]:
+    return {record.meeting_id for record in load_processed_meeting_records(path)}
+
+
+def migrate_processed_meetings_log(
+    path: Path = PROCESSED_MEETINGS_PATH,
+    *,
+    legacy_path: Path = LEGACY_PROCESSED_MEETINGS_PATH,
+) -> int:
+    """Rewrite plain-ID lines to JSONL records. Returns number of legacy lines migrated."""
+    if not path.is_file() and legacy_path.is_file():
+        legacy_path.replace(path)
+
     if not path.is_file():
-        return set()
-    ids: set[str] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
+        return 0
+
+    raw_lines = path.read_text(encoding="utf-8").splitlines()
+    records: list[ProcessedMeetingRecord] = []
+    legacy_count = 0
+    needs_rewrite = False
+
+    for line in raw_lines:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        ids.add(stripped.split()[0])
-    return ids
+        if stripped.startswith("{"):
+            record = _parse_processed_meeting_line(stripped)
+            if record is None:
+                needs_rewrite = True
+                continue
+            records.append(record)
+            continue
+
+        meeting_id = stripped.split()[0]
+        if not meeting_id:
+            needs_rewrite = True
+            continue
+        records.append(_legacy_processed_record(meeting_id))
+        legacy_count += 1
+        needs_rewrite = True
+
+    if not needs_rewrite:
+        return 0
+
+    # Preserve first-seen meeting_id if duplicates appear during migration.
+    seen: set[str] = set()
+    unique_records: list[ProcessedMeetingRecord] = []
+    for record in records:
+        if record.meeting_id in seen:
+            continue
+        seen.add(record.meeting_id)
+        unique_records.append(record)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in unique_records:
+            handle.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+    return legacy_count
 
 
-def append_processed_meeting_id(
-    meeting_id: str,
+def append_processed_meeting(
+    record: ProcessedMeetingRecord,
     path: Path = PROCESSED_MEETINGS_PATH,
     *,
     known_ids: set[str] | None = None,
 ) -> None:
-    cleaned = meeting_id.strip()
+    cleaned = record.meeting_id.strip()
     if not cleaned:
         return
     if known_ids is not None and cleaned in known_ids:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload = asdict(record)
+    payload["meeting_id"] = cleaned
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(cleaned + "\n")
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     if known_ids is not None:
         known_ids.add(cleaned)
 
@@ -224,10 +347,15 @@ def sanitize_title_for_filename(title: str) -> str:
     return safe_title.replace(" ", "+")
 
 
-def transcript_basename(title: str, timestamp_start_utc: str) -> str:
+def transcript_basename(
+    title: str,
+    timestamp_start_utc: str,
+    meeting_id: str,
+) -> str:
     return (
         f"{sanitize_title_for_filename(title)}"
         f"{TRANSCRIPT_FILENAME_MARKER}{filename_timestamp(timestamp_start_utc)}"
+        f"__{meeting_id}"
     )
 
 
@@ -367,20 +495,30 @@ def transcript_excerpt(sentences: list[Sentence]) -> str:
 
 def find_existing_transcript(
     folder: Path,
-    basename: str,
     meeting_id: str,
 ) -> Path | None:
+    """Return an existing transcript for this MeetGeek meeting ID, if any.
+
+    Prefer a filename that embeds the ID (go-forward naming). Fall back to
+    scanning .txt contents so legacy files (ID only in the Link line) still
+    dedupe correctly.
+    """
     target = transcripts_dir(folder)
     if not target.is_dir():
         return None
 
+    needle = meeting_id.lower()
+    if not needle:
+        return None
+
     for entry in target.iterdir():
-        if not entry.is_file():
+        if not entry.is_file() or entry.name.startswith("."):
             continue
-        if entry.stem == basename:
+        if entry.suffix.lower() != ".txt":
+            continue
+        if needle in entry.name.lower():
             return entry
 
-    needle = meeting_id.lower()
     for entry in target.iterdir():
         if not entry.is_file() or entry.name.startswith("."):
             continue
@@ -693,10 +831,14 @@ def process_meeting(
 ) -> MeetingOutcome:
     meeting = get_meeting(meeting_id)
     sentences = get_transcript(meeting_id)
-    basename = transcript_basename(meeting.title, meeting.timestamp_start_utc)
+    basename = transcript_basename(
+        meeting.title,
+        meeting.timestamp_start_utc,
+        meeting.meeting_id,
+    )
     date_label = meeting_date_label(meeting.timestamp_start_utc)
 
-    existing = find_existing_transcript(folder, basename, meeting.meeting_id)
+    existing = find_existing_transcript(folder, meeting.meeting_id)
     if existing is not None:
         return MeetingOutcome(
             status="skipped",
@@ -868,6 +1010,9 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    migrated = migrate_processed_meetings_log()
+    if migrated:
+        print(f"Migrated {migrated} legacy processed-meeting ID(s) to JSONL.")
     processed_ids = load_processed_meeting_ids()
 
     outcomes: list[MeetingOutcome] = []
@@ -877,7 +1022,7 @@ def main() -> int:
                 status="already_processed",
                 title=summary.meeting_id,
                 date_label=meeting_date_label(summary.timestamp_start_utc),
-                reason="Meeting ID already in processed_meetgeek_meetings.txt.",
+                reason="Meeting ID already has a prior decision in processed_meetgeek_meetings.json.",
             )
             outcomes.append(outcome)
             print_outcome(outcome)
@@ -905,8 +1050,15 @@ def main() -> int:
             not args.dry_run
             and should_record_processed(outcome.status)
         ):
-            append_processed_meeting_id(
-                summary.meeting_id,
+            append_processed_meeting(
+                ProcessedMeetingRecord(
+                    meeting_id=summary.meeting_id,
+                    decision=outcome.status,
+                    reason=outcome.reason or "unknown",
+                    deal_folder=folder.name,
+                    title=outcome.title,
+                    date=outcome.date_label,
+                ),
                 known_ids=processed_ids,
             )
 

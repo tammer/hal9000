@@ -59,7 +59,7 @@ GOOGLE_DRIVE_BASE/                 # …/Shared drives/Canada
 │       ├── emails/
 │       │   └── email_20260710_143000_Subject.txt
 │       ├── transcripts/
-│       │   └── Meeting+Title_sentences_2026-07-10.txt
+│       │   └── Meeting+Title_sentences_2026-07-10T15_00_00Z__meeting-uuid.txt
 │       └── ai-generated/
 │           ├── deal.json
 │           ├── summary.md
