@@ -98,27 +98,28 @@ def load_deal_catalog(
             or entry.name == "ai-generated"
         ):
             continue
-        if not folder_has_any_files(entry):
-            continue
 
         documents = collect_deal_context(entry, summary_only=True)
-        if not documents:
-            continue
+        if documents:
+            deal_payload = build_deal_payload(documents)
+            try:
+                identity = extract_deal_identity(
+                    deal_payload,
+                    deal_folder_name=entry.name,
+                    api_key=api_key,
+                    model=model,
+                )
+            except Exception as exc:
+                print(
+                    f"Warning: skipping deal {entry.name}; failed to extract identity: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+        else:
+            # Empty / no-readable-docs folders stay matchable by folder name
+            # (e.g. first email into a new portco).
+            identity = DealIdentity(company_name=None, human_names=[])
 
-        deal_payload = build_deal_payload(documents)
-        try:
-            identity = extract_deal_identity(
-                deal_payload,
-                deal_folder_name=entry.name,
-                api_key=api_key,
-                model=model,
-            )
-        except Exception as exc:
-            print(
-                f"Warning: skipping deal {entry.name}; failed to extract identity: {exc}",
-                file=sys.stderr,
-            )
-            continue
         catalog.append(
             DealCatalogEntry(
                 folder=entry,
