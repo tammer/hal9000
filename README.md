@@ -99,7 +99,7 @@ python run_pipeline.py [options]
 2. **Process emails** — `process_emails.py`
 3. **Meeting roundup** — `meeting_roundup.py`
 4. **Claude summaries** — `claude_summary2.py` for every deal folder
-5. **Process portcos** — `process_portco.py` for every portco folder
+5. **Portco reports** — `generate_portco_report.py` for every portco folder (refreshes `portco.json`, writes `summary.md`)
 6. **Daily summary** — `daily_summary.py` then `daily_summary_portco.py`
 7. **Summarizer** — `summarizer.py` (builds `ai-generated/status.md`)
 8. **Website** — `generate_website.py`

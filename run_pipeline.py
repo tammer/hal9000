@@ -49,6 +49,7 @@ class ClaudeResults:
 @dataclass
 class PortcoResults:
     ok: list[str] = field(default_factory=list)
+    skipped_up_to_date: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
 
 
@@ -155,11 +156,11 @@ def run_claude_summaries(
 
 def run_process_portcos(portco_folders: list[Path]) -> PortcoResults:
     results = PortcoResults()
-    script_path = REPO_ROOT / "process_portco.py"
+    script_path = REPO_ROOT / "generate_portco_report.py"
 
     for folder in portco_folders:
         name = folder.name
-        print(f"Processing portco {name}...", file=sys.stderr)
+        print(f"Generating portco report for {name}...", file=sys.stderr)
         completed = subprocess.run(
             [sys.executable, str(script_path), name],
             cwd=REPO_ROOT,
@@ -174,11 +175,15 @@ def run_process_portcos(portco_folders: list[Path]) -> PortcoResults:
             print(completed.stderr, end="", file=sys.stderr)
 
         if completed.returncode == 0:
-            results.ok.append(name)
+            output = (completed.stdout or "") + (completed.stderr or "")
+            if "No new portco.json since the last summary" in output:
+                results.skipped_up_to_date.append(name)
+            else:
+                results.ok.append(name)
             continue
 
         results.failed.append(name)
-        print(f"Error: process_portco failed for {name}", file=sys.stderr)
+        print(f"Error: generate_portco_report failed for {name}", file=sys.stderr)
 
     return results
 
@@ -196,6 +201,8 @@ def format_claude_summary(claude: ClaudeResults) -> str:
 
 def format_portco_summary(portco: PortcoResults) -> str:
     parts = [f"{len(portco.ok)} ok"]
+    if portco.skipped_up_to_date:
+        parts.append(f"{len(portco.skipped_up_to_date)} skipped (up to date)")
     if portco.failed:
         parts.append(f"{len(portco.failed)} failed ({', '.join(portco.failed)})")
     return ", ".join(parts)
@@ -218,7 +225,7 @@ def print_pipeline_summary(results: PipelineResults) -> None:
         or results.claude.failed
     ):
         print(f"  Claude: {format_claude_summary(results.claude)}")
-    if results.portco.ok or results.portco.failed:
+    if results.portco.ok or results.portco.skipped_up_to_date or results.portco.failed:
         print(f"  Portcos: {format_portco_summary(results.portco)}")
     if results.daily_summary is not None:
         print(f"  Daily summary: {results.daily_summary}")
@@ -240,7 +247,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run the full deal pipeline: fetch transcripts, process emails, "
-            "meeting roundup, Claude summaries, process portcos, daily summary, "
+            "meeting roundup, Claude summaries, portco reports, daily summary, "
             "status table, website generation, and deploy."
         )
     )
@@ -408,12 +415,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
     else:
         print("Skipping Claude summaries (--skip-claude)", file=sys.stderr)
 
-    # Step 5: Process portcos
+    # Step 5: Portco reports (refresh portco.json + write summary.md)
     if not args.skip_portco:
-        if args.confirm and not confirm_step("Process portcos"):
-            print("Skipping process portcos (declined)", file=sys.stderr)
+        if args.confirm and not confirm_step("Portco reports"):
+            print("Skipping portco reports (declined)", file=sys.stderr)
         else:
-            print_banner(5, total_steps, "Process portcos")
+            print_banner(5, total_steps, "Portco reports")
             try:
                 portcos = portcos_base()
             except ValueError as exc:
@@ -431,7 +438,7 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
                 if results.portco.failed:
                     results.failed_steps.append("portco")
     else:
-        print("Skipping process portcos (--skip-portco)", file=sys.stderr)
+        print("Skipping portco reports (--skip-portco)", file=sys.stderr)
 
     # Step 6: Daily summary
     if not args.skip_daily_summary:
