@@ -54,7 +54,16 @@ class PortcoResults:
 
 
 @dataclass
+class FoundersResults:
+    ok: list[str] = field(default_factory=list)
+    skipped_complete: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+    hard_fail: bool = False
+
+
+@dataclass
 class PipelineResults:
+    founders: FoundersResults = field(default_factory=FoundersResults)
     fetch: str | None = None
     emails: str | None = None
     meeting_roundup: str | None = None
@@ -208,10 +217,80 @@ def format_portco_summary(portco: PortcoResults) -> str:
     return ", ".join(parts)
 
 
+def format_founders_summary(founders: FoundersResults) -> str:
+    if founders.hard_fail:
+        return "FAILED"
+    parts = [f"{len(founders.ok)} ok"]
+    if founders.skipped_complete:
+        parts.append(f"{len(founders.skipped_complete)} skipped (complete)")
+    if founders.failed:
+        parts.append(f"{len(founders.failed)} failed ({', '.join(founders.failed)})")
+    return ", ".join(parts)
+
+
+def parse_founders_all_output(stderr_text: str) -> FoundersResults:
+    """Parse founders.py --all stderr for ok / skipped / failed paths."""
+    results = FoundersResults()
+    for line in stderr_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Skipping ") and "Founders.md is complete" in stripped:
+            path = stripped.removeprefix("Skipping ").split(":", 1)[0].strip()
+            if path:
+                results.skipped_complete.append(path)
+        elif stripped.startswith("Resolving founders for "):
+            path = stripped.removeprefix("Resolving founders for ").rstrip(" .")
+            if path:
+                results.ok.append(path)
+        elif stripped.startswith("failed "):
+            rest = stripped.removeprefix("failed ").strip()
+            path = rest.split(":", 1)[0].strip()
+            if path:
+                results.failed.append(path)
+
+    failed_set = set(results.failed)
+    skipped_set = set(results.skipped_complete)
+    results.ok = list(
+        dict.fromkeys(
+            p for p in results.ok if p not in failed_set and p not in skipped_set
+        )
+    )
+    results.skipped_complete = list(dict.fromkeys(results.skipped_complete))
+    results.failed = list(dict.fromkeys(results.failed))
+    return results
+
+
+def run_founders_all() -> FoundersResults:
+    """Run founders.py --all; soft-fail per folder, hard-fail only on setup errors."""
+    script_path = REPO_ROOT / "founders.py"
+    completed = subprocess.run(
+        [sys.executable, str(script_path), "--all"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.stdout:
+        print(completed.stdout, end="")
+    if completed.stderr:
+        print(completed.stderr, end="", file=sys.stderr)
+
+    if completed.returncode != 0:
+        return FoundersResults(hard_fail=True)
+
+    return parse_founders_all_output(completed.stderr or "")
+
+
 def print_pipeline_summary(results: PipelineResults) -> None:
     print()
     print("PIPELINE COMPLETE")
 
+    if (
+        results.founders.ok
+        or results.founders.skipped_complete
+        or results.founders.failed
+        or results.founders.hard_fail
+    ):
+        print(f"  Founders: {format_founders_summary(results.founders)}")
     if results.fetch is not None:
         print(f"  Fetch: {results.fetch}")
     if results.emails is not None:
@@ -246,9 +325,9 @@ def print_pipeline_summary(results: PipelineResults) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the full deal pipeline: fetch transcripts, process emails, "
-            "meeting roundup, Claude summaries, portco reports, daily summary, "
-            "status table, website generation, and deploy."
+            "Run the full deal pipeline: founders, fetch transcripts, process "
+            "emails, meeting roundup, Claude summaries, portco reports, daily "
+            "summary, status table, website generation, and deploy."
         )
     )
     parser.add_argument(
@@ -272,27 +351,28 @@ def parse_args() -> argparse.Namespace:
             "Default: the resolved --day value."
         ),
     )
-    parser.add_argument("--skip-fetch", action="store_true", help="Skip step 1.")
-    parser.add_argument("--skip-emails", action="store_true", help="Skip step 2.")
+    parser.add_argument("--skip-founders", action="store_true", help="Skip step 1.")
+    parser.add_argument("--skip-fetch", action="store_true", help="Skip step 2.")
+    parser.add_argument("--skip-emails", action="store_true", help="Skip step 3.")
     parser.add_argument(
         "--skip-meeting-roundup",
         action="store_true",
-        help="Skip step 3.",
+        help="Skip step 4.",
     )
-    parser.add_argument("--skip-claude", action="store_true", help="Skip step 4.")
-    parser.add_argument("--skip-portco", action="store_true", help="Skip step 5.")
+    parser.add_argument("--skip-claude", action="store_true", help="Skip step 5.")
+    parser.add_argument("--skip-portco", action="store_true", help="Skip step 6.")
     parser.add_argument(
         "--skip-daily-summary",
         action="store_true",
-        help="Skip step 6.",
+        help="Skip step 7.",
     )
     parser.add_argument(
         "--skip-summarizer",
         action="store_true",
-        help="Skip step 7.",
+        help="Skip step 8.",
     )
-    parser.add_argument("--skip-website", action="store_true", help="Skip step 8.")
-    parser.add_argument("--skip-deploy", action="store_true", help="Skip step 9.")
+    parser.add_argument("--skip-website", action="store_true", help="Skip step 9.")
+    parser.add_argument("--skip-deploy", action="store_true", help="Skip step 10.")
     parser.add_argument(
         "--confirm",
         action="store_true",
@@ -313,7 +393,7 @@ def parse_args() -> argparse.Namespace:
 
 def run_pipeline_once(args: argparse.Namespace) -> int:
     results = PipelineResults()
-    total_steps = 9
+    total_steps = 10
 
     try:
         pipeline_day = resolve_pipeline_day(args.day)
@@ -336,12 +416,28 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
         print(f"Error: deals base is not a directory: {base}", file=sys.stderr)
         return 1
 
-    # Step 1: Fetch transcripts
+    # Step 1: Founders
+    if not args.skip_founders:
+        if args.confirm and not confirm_step("Founders"):
+            print("Skipping founders (declined)", file=sys.stderr)
+        else:
+            print_banner(1, total_steps, "Founders")
+            results.founders = run_founders_all()
+            if results.founders.hard_fail:
+                results.failed_steps.append("founders")
+                print_pipeline_summary(results)
+                return 1
+            if results.founders.failed:
+                results.failed_steps.append("founders")
+    else:
+        print("Skipping founders (--skip-founders)", file=sys.stderr)
+
+    # Step 2: Fetch transcripts
     if not args.skip_fetch:
         if args.confirm and not confirm_step("Fetch transcripts"):
             print("Skipping fetch (declined)", file=sys.stderr)
         else:
-            print_banner(1, total_steps, "Fetch transcripts")
+            print_banner(2, total_steps, "Fetch transcripts")
             fetch_args: list[str] = ["--cutoff-date", fetch_cutoff]
             if args.dry_run:
                 fetch_args.append("--dry-run")
@@ -356,12 +452,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
     else:
         print("Skipping fetch (--skip-fetch)", file=sys.stderr)
 
-    # Step 2: Process emails
+    # Step 3: Process emails
     if not args.skip_emails:
         if args.confirm and not confirm_step("Process emails"):
             print("Skipping emails (declined)", file=sys.stderr)
         else:
-            print_banner(2, total_steps, "Process emails")
+            print_banner(3, total_steps, "Process emails")
             email_args: list[str] = []
             if args.dry_run:
                 email_args.append("--dry-run")
@@ -376,12 +472,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
     else:
         print("Skipping emails (--skip-emails)", file=sys.stderr)
 
-    # Step 3: Meeting roundup
+    # Step 4: Meeting roundup
     if not args.skip_meeting_roundup:
         if args.confirm and not confirm_step("Meeting roundup"):
             print("Skipping meeting roundup (declined)", file=sys.stderr)
         else:
-            print_banner(3, total_steps, "Meeting roundup")
+            print_banner(4, total_steps, "Meeting roundup")
             completed = run_script("meeting_roundup.py", day_str)
             if completed.returncode != 0:
                 results.meeting_roundup = "FAILED"
@@ -394,12 +490,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
 
     deal_folders = list_deal_folders(base)
 
-    # Step 4: Claude summaries
+    # Step 5: Claude summaries
     if not args.skip_claude:
         if args.confirm and not confirm_step("Claude summaries"):
             print("Skipping Claude summaries (declined)", file=sys.stderr)
         else:
-            print_banner(4, total_steps, "Claude summaries")
+            print_banner(5, total_steps, "Claude summaries")
             results.empty_folders, results.no_source_docs = scan_folder_issues(
                 deal_folders
             )
@@ -415,12 +511,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
     else:
         print("Skipping Claude summaries (--skip-claude)", file=sys.stderr)
 
-    # Step 5: Portco reports (refresh portco.json + write summary.md)
+    # Step 6: Portco reports (refresh portco.json + write summary.md)
     if not args.skip_portco:
         if args.confirm and not confirm_step("Portco reports"):
             print("Skipping portco reports (declined)", file=sys.stderr)
         else:
-            print_banner(5, total_steps, "Portco reports")
+            print_banner(6, total_steps, "Portco reports")
             try:
                 portcos = portcos_base()
             except ValueError as exc:
@@ -440,12 +536,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
     else:
         print("Skipping portco reports (--skip-portco)", file=sys.stderr)
 
-    # Step 6: Daily summary
+    # Step 7: Daily summary
     if not args.skip_daily_summary:
         if args.confirm and not confirm_step("Daily summary"):
             print("Skipping daily summary (declined)", file=sys.stderr)
         else:
-            print_banner(6, total_steps, "Daily summary")
+            print_banner(7, total_steps, "Daily summary")
             completed = run_script("daily_summary.py", day_str)
             if completed.returncode != 0:
                 results.daily_summary = "FAILED"
@@ -462,12 +558,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
     else:
         print("Skipping daily summary (--skip-daily-summary)", file=sys.stderr)
 
-    # Step 7: Summarizer
+    # Step 8: Summarizer
     if not args.skip_summarizer:
         if args.confirm and not confirm_step("Summarizer"):
             print("Skipping summarizer (declined)", file=sys.stderr)
         else:
-            print_banner(7, total_steps, "Summarizer")
+            print_banner(8, total_steps, "Summarizer")
             completed = run_script("summarizer.py")
             if completed.returncode != 0:
                 results.summarizer = "FAILED"
@@ -478,12 +574,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
     else:
         print("Skipping summarizer (--skip-summarizer)", file=sys.stderr)
 
-    # Step 8: Website
+    # Step 9: Website
     if not args.skip_website:
         if args.confirm and not confirm_step("Website"):
             print("Skipping website (declined)", file=sys.stderr)
         else:
-            print_banner(8, total_steps, "Website")
+            print_banner(9, total_steps, "Website")
             completed = run_script("generate_website.py")
             if completed.returncode != 0:
                 results.website = "FAILED"
@@ -494,12 +590,12 @@ def run_pipeline_once(args: argparse.Namespace) -> int:
     else:
         print("Skipping website (--skip-website)", file=sys.stderr)
 
-    # Step 9: Deploy website
+    # Step 10: Deploy website
     if not args.skip_deploy:
         if args.confirm and not confirm_step("Deploy website"):
             print("Skipping deploy (declined)", file=sys.stderr)
         else:
-            print_banner(9, total_steps, "Deploy website")
+            print_banner(10, total_steps, "Deploy website")
             completed = run_script("website_deploy.py")
             if completed.returncode != 0:
                 results.deploy = "FAILED"

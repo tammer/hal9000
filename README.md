@@ -25,7 +25,7 @@ python run_pipeline.py
 |----------|-------------|-------------|
 | `GOOGLE_DRIVE_BASE` | Most scripts | Canada shared-drive root containing `deals/`, `portcos/`, `ai-generated/`, and `facts.md` |
 | `WEBSITE_BASE` | `generate_website.py` | Parent directory where `website/` output is written |
-| `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `daily_summary.py`, `daily_summary_portco.py`, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
+| `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `founders.py`, `daily_summary.py`, `daily_summary_portco.py`, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
 | `GROQ_MODEL` | Optional | Groq model (default: `llama-3.3-70b-versatile`) |
 | `ANTHROPIC_API_KEY` | `claude_summary.py`, `chat.py`, `researcher.py` | Anthropic API key |
 | `ANTHROPIC_MODEL` | Optional | Default Anthropic model for `chat.py` |
@@ -54,6 +54,7 @@ GOOGLE_DRIVE_BASE/                 # …/Shared drives/Canada
 │       └── meetgeeks/YYYY-MM-DD.json
 ├── deals/
 │   └── Mobi/
+│       ├── Founders.md            # founders + LinkedIn (founders.py)
 │       ├── pitch-deck.pdf         # source documents (top-level files)
 │       ├── contents.json          # optional file index (generate_contents.py)
 │       ├── emails/
@@ -67,6 +68,7 @@ GOOGLE_DRIVE_BASE/                 # …/Shared drives/Canada
 │           └── deal.html          # optional (main.py)
 └── portcos/
     └── Central-Agent/
+        ├── Founders.md
         ├── emails/
         ├── transcripts/
         └── ai-generated/
@@ -97,15 +99,16 @@ python run_pipeline.py [options]
 
 **Steps:**
 
-1. **Fetch transcripts** — `fetch_all_transcripts.py`
-2. **Process emails** — `process_emails.py`
-3. **Meeting roundup** — `meeting_roundup.py`
-4. **Claude summaries** — `claude_summary2.py` for every deal folder
-5. **Portco reports** — `generate_portco_report.py` for every portco folder (refreshes `portco.json`, writes `summary.md`)
-6. **Daily summary** — `daily_summary.py` then `daily_summary_portco.py`
-7. **Summarizer** — `summarizer.py` (builds `ai-generated/status.md`)
-8. **Website** — `generate_website.py`
-9. **Deploy** — `website_deploy.py`
+1. **Founders** — `founders.py --all` (writes/updates top-level `Founders.md`; skips when complete)
+2. **Fetch transcripts** — `fetch_all_transcripts.py`
+3. **Process emails** — `process_emails.py`
+4. **Meeting roundup** — `meeting_roundup.py`
+5. **Claude summaries** — `claude_summary2.py` for every deal folder
+6. **Portco reports** — `generate_portco_report.py` for every portco folder (refreshes `portco.json`, writes `summary.md`)
+7. **Daily summary** — `daily_summary.py` then `daily_summary_portco.py`
+8. **Summarizer** — `summarizer.py` (builds `ai-generated/status.md`)
+9. **Website** — `generate_website.py`
+10. **Deploy** — `website_deploy.py`
 
 **Options:**
 
@@ -114,15 +117,16 @@ python run_pipeline.py [options]
 | `--day {today,yesterday}` | Target calendar day for fetch cutoff, meeting roundup, and daily summaries. Default: yesterday before 16:30 local, otherwise today |
 | `--dry-run` | Pass through to fetch and email steps; no files written, emails not marked read |
 | `--cutoff-date DATE` | Override fetch cutoff (`YYYY-MM-DD`). Default: the resolved `--day` value |
-| `--skip-fetch` | Skip step 1 |
-| `--skip-emails` | Skip step 2 |
-| `--skip-meeting-roundup` | Skip step 3 |
-| `--skip-claude` | Skip step 4 |
-| `--skip-portco` | Skip step 5 |
-| `--skip-daily-summary` | Skip step 6 |
-| `--skip-summarizer` | Skip step 7 |
-| `--skip-website` | Skip step 8 |
-| `--skip-deploy` | Skip step 9 |
+| `--skip-founders` | Skip step 1 |
+| `--skip-fetch` | Skip step 2 |
+| `--skip-emails` | Skip step 3 |
+| `--skip-meeting-roundup` | Skip step 4 |
+| `--skip-claude` | Skip step 5 |
+| `--skip-portco` | Skip step 6 |
+| `--skip-daily-summary` | Skip step 7 |
+| `--skip-summarizer` | Skip step 8 |
+| `--skip-website` | Skip step 9 |
+| `--skip-deploy` | Skip step 10 |
 | `--confirm` | Ask yes/no before running each step |
 
 **Examples:**
@@ -146,6 +150,58 @@ python run_pipeline.py --day yesterday --cutoff-date 2026-07-01
 ```
 
 Before Claude summaries, the pipeline scans deal folders and prints notes for empty folders or folders with no readable source documents.
+
+---
+
+## Founders
+
+### `founders.py`
+
+Identifies founders and LinkedIn profile URLs for a deal or portco folder. Writes a human-readable `Founders.md` at the company folder root (visible to `collect_documents` and later Claude steps).
+
+```bash
+python founders.py deals/Mobi
+python founders.py portcos/Central-Agent
+python founders.py --all
+python founders.py --all --refresh
+```
+
+**Algo:**
+
+1. If `Founders.md` exists and is **complete**, skip (unless `--refresh`).
+2. Otherwise extract founders from `ai-generated/summary.md`, `identity.json`, and top-level docs (excluding `Founders.md` itself).
+3. Fill blanks only — never overwrite an existing LinkedIn URL or `unknown`.
+4. Resolve still-missing LinkedIns via Groq Compound web search (`groq/compound`).
+5. Write `Founders.md` with `Status: complete` or `incomplete`.
+
+**Complete** means either `Status: complete` (manual stop), or ≥1 founder with first+last name and every founder has a `linkedin.com/in/...` URL or the literal `unknown`.
+
+**Example `Founders.md`:**
+
+```markdown
+# Founders
+
+Company: Acme Inc
+Status: incomplete
+
+## Jane Doe
+- LinkedIn: https://www.linkedin.com/in/jane-doe
+
+## John Smith
+- LinkedIn: 
+```
+
+| Flag | Description |
+|------|-------------|
+| `--all` | Process every folder under `deals/` and `portcos/` |
+| `--refresh` | Re-run even when complete (still fill-blanks only) |
+| `--skip-web-search` | Extract from materials only; skip Compound |
+| `--model` | Override Groq extraction model |
+| `--compound-model` | Override Compound model (default: `groq/compound`) |
+
+**Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE`
+
+Pipeline step 1 runs `founders.py --all`. Use `--skip-founders` to skip it.
 
 ---
 
