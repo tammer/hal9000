@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,10 +32,19 @@ from paths import (
 LOOKBACK_DAYS = 8
 MAX_DEAL_DOC_CHARS = 100_000
 TRANSCRIPT_EXCERPT_CHARS = 3_000
+CONTEXT_BRIEF_CHARS = 2_000
 MEETING_LINK_PREFIX = "https://app.meetgeek.ai/meeting/"
 
 TRANSCRIPT_FILENAME_MARKER = "_sentences_"
 TRANSCRIPTS_DIR_NAME = "transcripts"
+EMAILS_DIR_NAME = "emails"
+IDENTITY_FILENAME = "identity.json"
+AI_GENERATED_DIR_NAME = "ai-generated"
+SHORTLIST_LIMIT = 3
+MIN_FOLDER_NAME_MATCH_LEN = 4
+MIN_ALIAS_MATCH_LEN = 4
+STRONG_SIGNAL_SCORE = 10
+WEAK_SIGNAL_SCORE = 1
 
 PROCESSED_MEETINGS_PATH = (
     Path(__file__).resolve().parent / "processed_meetgeek_meetings.json"
@@ -55,22 +64,49 @@ ANTLER_STAFF = {
     "bernie li",
 }
 
+IGNORED_EMAIL_DOMAINS = frozenset(
+    {
+        "antler.co",
+        "gmail.com",
+        "googlemail.com",
+        "yahoo.com",
+        "yahoo.ca",
+        "hotmail.com",
+        "outlook.com",
+        "live.com",
+        "icloud.com",
+        "me.com",
+        "mac.com",
+        "aol.com",
+        "protonmail.com",
+        "proton.me",
+        "msn.com",
+    }
+)
+
+EMAIL_ADDRESS_RE = re.compile(
+    r"[A-Z0-9._%+\-]+@([A-Z0-9.\-]+\.[A-Z]{2,})",
+    re.IGNORECASE,
+)
+
 IDENTITY_EXTRACTION_SYSTEM_PROMPT = """You extract the canonical identity of a startup deal from its deal documents.
 
 Return valid JSON only with this exact shape:
-{"company_name": "Acme Inc" or null, "human_names": ["Full Name", ...]}
+{"company_name": "Acme Inc" or null, "human_names": ["Full Name", ...], "aliases": ["Alt Name", ...], "product_summary": "one-line product blurb" or null}
 
 Include:
 - company_name: the startup or company name if one is clearly named; otherwise null
 - human_names: full names of founders (not Antler staff)
+- aliases: alternate company names, product names, or brand names clearly supported by the documents
+- product_summary: one concise sentence describing what the company/product does; otherwise null
 
 Rules:
 - These Antler team members appear on many deals and must be excluded from human_names:
   Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
 - Use full names as written in the documents when possible
 - The deal folder name is often a founder's first name and may be misspelled; use it only as a weak hint
-- Do not invent names or companies not supported by the documents
-- human_names must contain only person name strings; never include explanations or commentary in JSON values
+- Do not invent names, companies, aliases, or product details not supported by the documents
+- human_names and aliases must contain only strings; never include explanations or commentary in JSON values
 """
 
 JSON_RETRY_PROMPT = (
@@ -81,56 +117,61 @@ MAX_JSON_RETRIES = 3
 
 TRANSCRIPT_RELEVANCE_SYSTEM_PROMPT = """You decide whether a MeetGeek meeting belongs to a specific startup deal.
 
-You are given the deal's company name (if any) and human names extracted from deal documents.
+You are given a rich deal identity (company, people, aliases, email domains, product summary, and a context brief from the deal folder) plus meeting metadata and a transcript excerpt.
 
 Return valid JSON only with this exact shape:
-{"relevant": true, "reason": "explanation of why the meeting is relevant referring to the identity evidence and conversation nature"}
+{"relevant": true, "reason": "explanation of why the meeting is relevant"}
 
-A meeting is relevant ONLY if BOTH of the following are true:
+A meeting is relevant when EITHER of the following is true:
 
-1. Identity evidence: the company name and/or one of the human names appears in the meeting title, attendee names, participant emails, host email, or transcript text.
-2. Conversation nature: the transcript excerpt shows a deal-assessment discussion — Antler or investor-side people asking diligence-style questions (market, product, traction, team, fundraising, GTM, etc.) and founders or startup-side people answering about their business.
+1. Identity evidence: the company name, an alias, a human name, or an email domain from the deal clearly appears in the meeting title, attendee names, participant emails, host email, or transcript text.
+2. Context evidence: the discussion clearly aligns with this deal's product/context brief (not generic startup talk).
+
+Conversation nature:
+- Diligence-style Q&A counts.
+- Founder/company check-ins and progress updates count when identity or context points at this deal.
+- Internal Antler syncs about this specific deal count when identity or context clearly points at it.
+- Unrelated social catch-ups or meetings about a different company do NOT count.
 
 Hard rules:
-- These Antler team members appear on ALL deals and must NEVER determine relevance:
+- These Antler team members appear on ALL deals and must NEVER alone determine relevance:
   Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
 - Do NOT match similar-sounding or partially similar names (e.g. Chen is not Chan)
-- Do NOT infer company matches from email domains or substrings
 - Do NOT mark relevant based on shared generic topics alone
-- A lone name or single-word match with no supporting deal-assessment conversation context is NOT enough; set relevant=false
 - If the meeting discusses a different company or topic and a deal name appears only coincidentally, set relevant=false
-- Casual mentions, social catch-ups, or unrelated work meetings are NOT relevant even if a name appears
-- If no company name or human name from the deal identity appears in the meeting, set relevant=false
-- If conversation context is missing or thin (empty excerpt, greetings only) and identity evidence is weak, set relevant=false
 - When evidence is ambiguous, set relevant=false
 
-reason must be one concise sentence. If relevant=true, name the matching company or person and where it appears, and briefly note why the conversation fits a deal assessment.
+reason must be one concise sentence. If relevant=true, name the matching evidence and briefly note why it fits this deal.
 """
 
 MEETING_DEAL_MATCH_SYSTEM_PROMPT = """You decide which single startup deal folder a MeetGeek meeting belongs to.
 
-You are given meeting metadata, a transcript excerpt, and a catalog of deal folders with their identities.
+You are given meeting metadata, a transcript excerpt, and a SHORTLIST of candidate deal folders with rich identities (company, people, aliases, email domains, product summary, context brief).
 
 Return valid JSON only with this exact shape:
 {"deal_folder": "FolderName" or null, "reason": "short explanation"}
 
-A meeting matches a deal ONLY if BOTH of the following are true:
+A meeting matches a candidate when EITHER of the following is true for that candidate:
 
-1. Identity evidence: the company name and/or one of the human names from that deal appears in the meeting title, attendee names, participant emails, host email, or transcript text.
-2. Conversation nature: the transcript excerpt shows a deal-assessment discussion — Antler or investor-side people asking diligence-style questions (market, product, traction, team, fundraising, GTM, etc.) and founders or startup-side people answering about their business.
+1. Identity evidence: the company name, an alias, a human name, or an email domain from that deal clearly appears in the meeting title, attendee names, participant emails, host email, or transcript text.
+2. Context evidence: the discussion clearly aligns with that deal's product/context brief (not generic startup talk).
+
+Conversation nature:
+- Diligence-style Q&A counts.
+- Founder/company check-ins and progress updates count when identity or context points at that deal.
+- Internal Antler syncs about that specific deal count when identity or context clearly points at it.
+- Unrelated social catch-ups or meetings about a different company do NOT count.
 
 Hard rules:
-- These Antler team members appear on ALL deals and must NEVER determine a match:
+- These Antler team members appear on ALL deals and must NEVER alone determine a match:
   Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
 - Do NOT match similar-sounding or partially similar names (e.g. Chen is not Chan)
-- Do NOT infer company matches from email domains or substrings
 - Do NOT match based on shared generic topics alone
-- Return at most one deal_folder; if no deal matches, return null
-- If multiple deals could match, pick the one with the strongest name/company evidence; if still tied, return null
-- Casual mentions, social catch-ups, or unrelated work meetings are NOT a match even if a name appears
-- If conversation context is missing or thin (empty excerpt, greetings only) and identity evidence is weak, return null
+- Return at most one deal_folder; choose ONLY from the provided shortlist; if none match, return null
+- If multiple candidates could match, pick the one with the strongest evidence; if still tied, return null
+- When evidence is ambiguous, return null
 
-reason must be one concise sentence. If deal_folder is set, name the matching company or person and where it appears, and briefly note why the conversation fits a deal assessment.
+reason must be one concise sentence. If deal_folder is set, name the matching evidence and briefly note why it fits that deal.
 - deal_folder must be a deal folder name string or null; never include explanations in JSON values
 """
 
@@ -139,6 +180,10 @@ reason must be one concise sentence. If deal_folder is set, name the matching co
 class DealIdentity:
     company_name: str | None
     human_names: list[str]
+    aliases: list[str] = field(default_factory=list)
+    email_domains: list[str] = field(default_factory=list)
+    product_summary: str | None = None
+    context_brief: str | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +196,16 @@ class RelevanceResult:
 class DealMatchTarget:
     folder_name: str
     identity: DealIdentity
+
+
+@dataclass(frozen=True)
+class MatchCandidate:
+    folder_name: str
+    identity: DealIdentity
+    score: int
+    strong_hits: int
+    weak_hits: int
+    reasons: list[str]
 
 
 @dataclass(frozen=True)
@@ -371,6 +426,18 @@ def transcript_relative_path(filename: str) -> str:
     return f"{TRANSCRIPTS_DIR_NAME}/{filename}"
 
 
+def identity_path(folder: Path) -> Path:
+    return folder / AI_GENERATED_DIR_NAME / IDENTITY_FILENAME
+
+
+def summary_path(folder: Path) -> Path:
+    return folder / AI_GENERATED_DIR_NAME / "summary.md"
+
+
+def emails_dir(folder: Path) -> Path:
+    return folder / EMAILS_DIR_NAME
+
+
 def collect_deal_context(
     folder: Path,
     *,
@@ -378,11 +445,11 @@ def collect_deal_context(
 ) -> list[tuple[Path, str]]:
     documents: list[tuple[Path, str]] = []
 
-    summary_path = folder / "ai-generated" / "summary.md"
-    if summary_path.is_file():
-        summary_text = read_file_as_text(summary_path)
+    summary = summary_path(folder)
+    if summary.is_file():
+        summary_text = read_file_as_text(summary)
         if summary_text:
-            documents.append((summary_path, summary_text))
+            documents.append((summary, summary_text))
         if summary_only:
             return documents
 
@@ -400,6 +467,201 @@ def collect_deal_context(
         documents.append((entry, text))
 
     return documents
+
+
+def normalize_email_domain(domain: str) -> str | None:
+    cleaned = domain.strip().lower().lstrip("@")
+    if cleaned.startswith("www."):
+        cleaned = cleaned[4:]
+    if not cleaned or "." not in cleaned:
+        return None
+    if cleaned in IGNORED_EMAIL_DOMAINS:
+        return None
+    return cleaned
+
+
+def extract_email_domains_from_text(text: str) -> list[str]:
+    domains: list[str] = []
+    seen: set[str] = set()
+    for match in EMAIL_ADDRESS_RE.finditer(text):
+        domain = normalize_email_domain(match.group(1))
+        if domain is None or domain in seen:
+            continue
+        seen.add(domain)
+        domains.append(domain)
+    return domains
+
+
+def harvest_email_domains(folder: Path) -> list[str]:
+    domains: list[str] = []
+    seen: set[str] = set()
+    emails_folder = emails_dir(folder)
+    if not emails_folder.is_dir():
+        return domains
+
+    for entry in sorted(emails_folder.iterdir()):
+        if not entry.is_file() or entry.name.startswith("."):
+            continue
+        if entry.suffix.lower() != ".txt":
+            continue
+        text = read_file_as_text(entry)
+        if not text:
+            continue
+        for domain in extract_email_domains_from_text(text):
+            if domain in seen:
+                continue
+            seen.add(domain)
+            domains.append(domain)
+    return domains
+
+
+def truncate_context_brief(text: str | None) -> str | None:
+    if not text:
+        return None
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) <= CONTEXT_BRIEF_CHARS:
+        return cleaned
+    return (
+        cleaned[:CONTEXT_BRIEF_CHARS]
+        + "\n\n[Note: context brief truncated due to size limits.]"
+    )
+
+
+def empty_deal_identity() -> DealIdentity:
+    return DealIdentity(
+        company_name=None,
+        human_names=[],
+        aliases=[],
+        email_domains=[],
+        product_summary=None,
+        context_brief=None,
+    )
+
+
+def identity_to_dict(identity: DealIdentity) -> dict:
+    return {
+        "company_name": identity.company_name,
+        "human_names": list(identity.human_names),
+        "aliases": list(identity.aliases),
+        "email_domains": list(identity.email_domains),
+        "product_summary": identity.product_summary,
+        "context_brief": identity.context_brief,
+    }
+
+
+def parse_identity_payload(payload: dict) -> DealIdentity:
+    company_raw = payload.get("company_name")
+    company_name = str(company_raw).strip() if company_raw else None
+    if company_name and company_name.lower() in {"null", "none", ""}:
+        company_name = None
+
+    human_names: list[str] = []
+    for name in payload.get("human_names", []) or []:
+        cleaned = str(name).strip()
+        if cleaned:
+            human_names.append(cleaned)
+
+    aliases: list[str] = []
+    for alias in payload.get("aliases", []) or []:
+        cleaned = str(alias).strip()
+        if cleaned:
+            aliases.append(cleaned)
+
+    product_raw = payload.get("product_summary")
+    product_summary = str(product_raw).strip() if product_raw else None
+    if product_summary and product_summary.lower() in {"null", "none", ""}:
+        product_summary = None
+
+    domains: list[str] = []
+    for domain in payload.get("email_domains", []) or []:
+        normalized = normalize_email_domain(str(domain))
+        if normalized and normalized not in domains:
+            domains.append(normalized)
+
+    context_brief = truncate_context_brief(
+        str(payload.get("context_brief") or "").strip() or None
+    )
+
+    return DealIdentity(
+        company_name=company_name,
+        human_names=human_names,
+        aliases=aliases,
+        email_domains=domains,
+        product_summary=product_summary,
+        context_brief=context_brief,
+    )
+
+
+def load_identity_json(path: Path) -> DealIdentity | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return parse_identity_payload(payload)
+
+
+def write_identity_json(folder: Path, identity: DealIdentity) -> Path:
+    path = identity_path(folder)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(identity_to_dict(identity), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def identity_cache_is_fresh(folder: Path) -> bool:
+    path = identity_path(folder)
+    if not path.is_file():
+        return False
+    summary = summary_path(folder)
+    if not summary.is_file():
+        return True
+    return path.stat().st_mtime >= summary.stat().st_mtime
+
+
+def merge_identity_domains(
+    identity: DealIdentity,
+    domains: list[str],
+) -> DealIdentity:
+    merged = list(identity.email_domains)
+    seen = set(merged)
+    for domain in domains:
+        normalized = normalize_email_domain(domain)
+        if normalized is None or normalized in seen:
+            continue
+        seen.add(normalized)
+        merged.append(normalized)
+    if merged == list(identity.email_domains):
+        return identity
+    return DealIdentity(
+        company_name=identity.company_name,
+        human_names=list(identity.human_names),
+        aliases=list(identity.aliases),
+        email_domains=merged,
+        product_summary=identity.product_summary,
+        context_brief=identity.context_brief,
+    )
+
+
+def with_context_brief(identity: DealIdentity, brief: str | None) -> DealIdentity:
+    truncated = truncate_context_brief(brief)
+    if truncated == identity.context_brief:
+        return identity
+    return DealIdentity(
+        company_name=identity.company_name,
+        human_names=list(identity.human_names),
+        aliases=list(identity.aliases),
+        email_domains=list(identity.email_domains),
+        product_summary=identity.product_summary,
+        context_brief=truncated,
+    )
 
 
 def meeting_link(meeting_id: str) -> str:
@@ -576,21 +838,6 @@ def groq_json_chat(
     raise RuntimeError("Groq JSON chat failed without a response")
 
 
-def parse_identity_payload(payload: dict) -> DealIdentity:
-    company_raw = payload.get("company_name")
-    company_name = str(company_raw).strip() if company_raw else None
-    if company_name and company_name.lower() in {"null", "none", ""}:
-        company_name = None
-
-    human_names: list[str] = []
-    for name in payload.get("human_names", []):
-        cleaned = str(name).strip()
-        if cleaned:
-            human_names.append(cleaned)
-
-    return DealIdentity(company_name=company_name, human_names=human_names)
-
-
 def extract_deal_identity(
     deal_payload: str,
     *,
@@ -610,6 +857,46 @@ def extract_deal_identity(
     return parse_identity_payload(payload)
 
 
+def load_or_build_identity(
+    folder: Path,
+    *,
+    api_key: str,
+    model: str,
+    refresh: bool = False,
+) -> DealIdentity:
+    path = identity_path(folder)
+    harvested = harvest_email_domains(folder)
+
+    if not refresh and identity_cache_is_fresh(folder):
+        cached = load_identity_json(path)
+        if cached is not None:
+            merged = merge_identity_domains(cached, harvested)
+            if merged != cached:
+                write_identity_json(folder, merged)
+            return merged
+
+    documents = collect_deal_context(folder, summary_only=True)
+    if not documents:
+        documents = collect_deal_context(folder, summary_only=False)
+
+    if documents:
+        deal_payload = build_deal_payload(documents)
+        identity = extract_deal_identity(
+            deal_payload,
+            deal_folder_name=folder.name,
+            api_key=api_key,
+            model=model,
+        )
+        brief_source = documents[0][1]
+        identity = with_context_brief(identity, brief_source)
+    else:
+        identity = empty_deal_identity()
+
+    identity = merge_identity_domains(identity, harvested)
+    write_identity_json(folder, identity)
+    return identity
+
+
 def print_deal_identity(identity: DealIdentity) -> None:
     print("Deal identity (from documents):")
     if identity.company_name:
@@ -620,7 +907,36 @@ def print_deal_identity(identity: DealIdentity) -> None:
         print(f"  People: {', '.join(identity.human_names)}")
     else:
         print("  People: (none identified)")
+    if identity.aliases:
+        print(f"  Aliases: {', '.join(identity.aliases)}")
+    if identity.email_domains:
+        print(f"  Domains: {', '.join(identity.email_domains)}")
+    if identity.product_summary:
+        print(f"  Product: {identity.product_summary}")
     print()
+
+
+def format_identity_for_prompt(
+    identity: DealIdentity,
+    *,
+    include_context_brief: bool = True,
+) -> str:
+    company = identity.company_name or "(none)"
+    people = ", ".join(identity.human_names) or "(none)"
+    aliases = ", ".join(identity.aliases) or "(none)"
+    domains = ", ".join(identity.email_domains) or "(none)"
+    product = identity.product_summary or "(none)"
+    lines = [
+        f"  company: {company}",
+        f"  people: {people}",
+        f"  aliases: {aliases}",
+        f"  email_domains: {domains}",
+        f"  product_summary: {product}",
+    ]
+    if include_context_brief:
+        brief = identity.context_brief or "(none)"
+        lines.append(f"  context_brief:\n{brief}")
+    return "\n".join(lines)
 
 
 def build_meeting_metadata_prompt(
@@ -648,13 +964,9 @@ def build_relevance_prompt(
     sentences: list[Sentence],
     identity: DealIdentity,
 ) -> str:
-    company = identity.company_name or "(none)"
-    people = ", ".join(identity.human_names) or "(none)"
-
     return (
         "Deal identity:\n"
-        f"- Company: {company}\n"
-        f"- People: {people}\n\n"
+        f"{format_identity_for_prompt(identity)}\n\n"
         f"{build_meeting_metadata_prompt(meeting, sentences)}"
     )
 
@@ -695,44 +1007,164 @@ def meeting_match_haystack(meeting: Meeting, sentences: list[Sentence]) -> str:
     return " ".join(part for part in parts if part)
 
 
+def meeting_email_domains(meeting: Meeting) -> set[str]:
+    domains: set[str] = set()
+    emails = list(meeting.participant_emails)
+    if meeting.host_email:
+        emails.append(meeting.host_email)
+    for email in emails:
+        if "@" not in email:
+            continue
+        domain = normalize_email_domain(email.rsplit("@", 1)[-1])
+        if domain:
+            domains.add(domain)
+    return domains
+
+
+def score_target_against_haystack(
+    target: DealMatchTarget,
+    haystack: str,
+    *,
+    email_domains: set[str] | None = None,
+) -> MatchCandidate | None:
+    strong_hits = 0
+    weak_hits = 0
+    reasons: list[str] = []
+    identity = target.identity
+
+    if (
+        len(target.folder_name) >= MIN_FOLDER_NAME_MATCH_LEN
+        and word_in_text(target.folder_name, haystack)
+    ):
+        strong_hits += 1
+        reasons.append(f"folder:{target.folder_name}")
+
+    if identity.company_name and word_in_text(identity.company_name, haystack):
+        strong_hits += 1
+        reasons.append(f"company:{identity.company_name}")
+
+    for alias in identity.aliases:
+        if len(alias) >= MIN_ALIAS_MATCH_LEN and word_in_text(alias, haystack):
+            strong_hits += 1
+            reasons.append(f"alias:{alias}")
+            break
+
+    if email_domains:
+        for domain in identity.email_domains:
+            if domain.lower() in email_domains:
+                strong_hits += 1
+                reasons.append(f"domain:{domain}")
+                break
+
+    for name in identity.human_names:
+        if name.lower() in ANTLER_STAFF:
+            continue
+        if word_in_text(name, haystack):
+            strong_hits += 1
+            reasons.append(f"person:{name}")
+            continue
+        name_parts = name.split()
+        first_name = name_parts[0] if name_parts else ""
+        if len(first_name) >= 3 and word_in_text(first_name, haystack):
+            weak_hits += 1
+            reasons.append(f"first_name:{first_name}")
+
+    if strong_hits == 0 and weak_hits == 0:
+        return None
+
+    score = (strong_hits * STRONG_SIGNAL_SCORE) + (weak_hits * WEAK_SIGNAL_SCORE)
+    return MatchCandidate(
+        folder_name=target.folder_name,
+        identity=identity,
+        score=score,
+        strong_hits=strong_hits,
+        weak_hits=weak_hits,
+        reasons=reasons,
+    )
+
+
+def domains_from_haystack(haystack: str) -> set[str]:
+    return set(extract_email_domains_from_text(haystack))
+
+
+def shortlist_deal_matches_from_haystack(
+    haystack: str,
+    targets: list[DealMatchTarget],
+    *,
+    email_domains: set[str] | None = None,
+    limit: int = SHORTLIST_LIMIT,
+) -> list[MatchCandidate]:
+    resolved_domains = email_domains if email_domains is not None else domains_from_haystack(haystack)
+    candidates: list[MatchCandidate] = []
+    for target in targets:
+        candidate = score_target_against_haystack(
+            target,
+            haystack,
+            email_domains=resolved_domains,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+
+    candidates.sort(
+        key=lambda item: (
+            item.score,
+            item.strong_hits,
+            item.folder_name.lower(),
+        ),
+        reverse=True,
+    )
+    return candidates[:limit]
+
+
+def shortlist_deal_matches(
+    meeting: Meeting,
+    sentences: list[Sentence],
+    targets: list[DealMatchTarget],
+    *,
+    limit: int = SHORTLIST_LIMIT,
+) -> list[MatchCandidate]:
+    return shortlist_deal_matches_from_haystack(
+        meeting_match_haystack(meeting, sentences),
+        targets,
+        email_domains=meeting_email_domains(meeting),
+        limit=limit,
+    )
+
+
+def unique_strong_match(
+    candidates: list[MatchCandidate],
+    *,
+    source_label: str = "content",
+) -> MatchResult | None:
+    strong = [candidate for candidate in candidates if candidate.strong_hits > 0]
+    if len(strong) != 1:
+        return None
+    winner = strong[0]
+    detail = ", ".join(winner.reasons) or "strong signal"
+    return MatchResult(
+        deal_folder=winner.folder_name,
+        reason=f"Matched {winner.folder_name} by {detail} in {source_label}.",
+    )
+
+
 def find_programmatic_deal_match_from_haystack(
     haystack: str,
     targets: list[DealMatchTarget],
     *,
     source_label: str = "content",
+    email_domains: set[str] | None = None,
 ) -> MatchResult | None:
-    matched_folders: list[str] = []
+    """Return a unique strong programmatic match, if any.
 
-    for target in targets:
-        if word_in_text(target.folder_name, haystack):
-            matched_folders.append(target.folder_name)
-            continue
-
-        if target.identity.company_name and word_in_text(
-            target.identity.company_name,
-            haystack,
-        ):
-            matched_folders.append(target.folder_name)
-            continue
-
-        for name in target.identity.human_names:
-            if name.lower() in ANTLER_STAFF:
-                continue
-            name_parts = name.split()
-            first_name = name_parts[0] if name_parts else ""
-            if word_in_text(name, haystack) or (
-                len(first_name) >= 3 and word_in_text(first_name, haystack)
-            ):
-                matched_folders.append(target.folder_name)
-                break
-
-    unique = sorted(set(matched_folders))
-    if len(unique) == 1:
-        return MatchResult(
-            deal_folder=unique[0],
-            reason=f"Matched {unique[0]} by name or folder in {source_label}.",
-        )
-    return None
+    Weak-only hits (e.g. first name) never auto-accept.
+    """
+    candidates = shortlist_deal_matches_from_haystack(
+        haystack,
+        targets,
+        email_domains=email_domains,
+        limit=len(targets) or 1,
+    )
+    return unique_strong_match(candidates, source_label=source_label)
 
 
 def find_programmatic_deal_match(
@@ -740,23 +1172,32 @@ def find_programmatic_deal_match(
     sentences: list[Sentence],
     targets: list[DealMatchTarget],
 ) -> MatchResult | None:
-    haystack = meeting_match_haystack(meeting, sentences)
     return find_programmatic_deal_match_from_haystack(
-        haystack,
+        meeting_match_haystack(meeting, sentences),
         targets,
         source_label="meeting content",
+        email_domains=meeting_email_domains(meeting),
     )
 
 
 def format_deal_targets_for_prompt(targets: list[DealMatchTarget]) -> str:
     lines: list[str] = []
     for target in targets:
-        company = target.identity.company_name or "(none)"
-        people = ", ".join(target.identity.human_names) or "(none)"
         lines.append(
             f"- folder: {target.folder_name}\n"
-            f"  company: {company}\n"
-            f"  people: {people}"
+            f"{format_identity_for_prompt(target.identity)}"
+        )
+    return "\n".join(lines)
+
+
+def format_shortlist_for_prompt(candidates: list[MatchCandidate]) -> str:
+    lines: list[str] = []
+    for candidate in candidates:
+        signal = ", ".join(candidate.reasons) or "unknown"
+        lines.append(
+            f"- folder: {candidate.folder_name}\n"
+            f"  shortlist_signals: {signal}\n"
+            f"{format_identity_for_prompt(candidate.identity)}"
         )
     return "\n".join(lines)
 
@@ -764,12 +1205,12 @@ def format_deal_targets_for_prompt(targets: list[DealMatchTarget]) -> str:
 def build_meeting_match_prompt(
     meeting: Meeting,
     sentences: list[Sentence],
-    targets: list[DealMatchTarget],
+    candidates: list[MatchCandidate],
 ) -> str:
     return (
         f"{build_meeting_metadata_prompt(meeting, sentences)}\n\n"
-        "Deal catalog:\n"
-        f"{format_deal_targets_for_prompt(targets)}"
+        "Candidate deal folders (shortlist):\n"
+        f"{format_shortlist_for_prompt(candidates)}"
     )
 
 
@@ -781,19 +1222,23 @@ def find_matching_deal(
     api_key: str,
     model: str,
 ) -> MatchResult:
-    programmatic = find_programmatic_deal_match(meeting, sentences, targets)
-    if programmatic is not None:
-        return programmatic
-
     if not targets:
         return MatchResult(
             deal_folder=None,
             reason="No deal identity matched the meeting.",
         )
 
+    candidates = shortlist_deal_matches(meeting, sentences, targets)
+    if not candidates:
+        return MatchResult(
+            deal_folder=None,
+            reason="No deal identity signals matched the meeting.",
+        )
+
+    known = {candidate.folder_name for candidate in candidates}
     payload = groq_json_chat(
         system_prompt=MEETING_DEAL_MATCH_SYSTEM_PROMPT,
-        user_prompt=build_meeting_match_prompt(meeting, sentences, targets),
+        user_prompt=build_meeting_match_prompt(meeting, sentences, candidates),
         api_key=api_key,
         model=model,
     )
@@ -802,7 +1247,6 @@ def find_matching_deal(
     if deal_folder and deal_folder.lower() in {"null", "none", ""}:
         deal_folder = None
 
-    known = {target.folder_name for target in targets}
     if deal_folder and deal_folder not in known:
         return MatchResult(
             deal_folder=None,
@@ -945,6 +1389,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore the processed-meetings log and re-analyze all meetings.",
     )
+    parser.add_argument(
+        "--refresh-identity",
+        action="store_true",
+        help="Force rebuild of ai-generated/identity.json for this folder.",
+    )
     return parser.parse_args()
 
 
@@ -973,23 +1422,15 @@ def main() -> int:
         print(f"Error: path is not a directory: {folder}", file=sys.stderr)
         return 1
 
-    documents = collect_deal_context(folder)
-    if not documents:
-        print(
-            f"Warning: no deal context documents found in {folder}",
-            file=sys.stderr,
-        )
-    deal_payload = build_deal_payload(documents) if documents else "[no deal documents]"
-
     try:
-        identity = extract_deal_identity(
-            deal_payload,
-            deal_folder_name=folder.name,
+        identity = load_or_build_identity(
+            folder,
             api_key=api_key,
             model=model,
+            refresh=args.refresh_identity,
         )
     except Exception as exc:
-        print(f"Error: failed to extract deal identity: {exc}", file=sys.stderr)
+        print(f"Error: failed to load deal identity: {exc}", file=sys.stderr)
         return 1
 
     print_deal_identity(identity)

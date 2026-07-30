@@ -62,6 +62,7 @@ GOOGLE_DRIVE_BASE/                 # …/Shared drives/Canada
 │       │   └── Meeting+Title_sentences_2026-07-10T15_00_00Z__meeting-uuid.txt
 │       └── ai-generated/
 │           ├── deal.json
+│           ├── identity.json      # company/people/aliases/domains for matching
 │           ├── summary.md
 │           └── deal.html          # optional (main.py)
 └── portcos/
@@ -70,6 +71,7 @@ GOOGLE_DRIVE_BASE/                 # …/Shared drives/Canada
         ├── transcripts/
         └── ai-generated/
             ├── portco.json
+            ├── identity.json
             └── summary.md
 ```
 
@@ -151,18 +153,25 @@ Before Claude summaries, the pipeline scans deal folders and prints notes for em
 
 ### `fetch_all_transcripts.py`
 
-Fetches team MeetGeek meetings since a cutoff date, matches each meeting to a folder under `deals/` or `portcos/` using an LLM, and writes relevant transcripts.
+Fetches team MeetGeek meetings since a cutoff date, matches each meeting to a folder under `deals/` or `portcos/`, and writes relevant transcripts.
+
+Matching is two-stage:
+
+1. **Shortlist** — score folders from persisted `ai-generated/identity.json` (company, people, aliases, email domains) against meeting title/attendees/emails/transcript excerpt.
+2. **Confirm** — LLM picks at most one folder from the shortlist using rich identity + a context brief from the deal summary. First-name-only hits never auto-file.
 
 ```bash
-python fetch_all_transcripts.py [--cutoff-date DATE] [--dry-run]
+python fetch_all_transcripts.py [--cutoff-date DATE] [--dry-run] [--refresh-identity]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--cutoff-date DATE` | Include meetings on or after this date (`YYYY-MM-DD`). Default: 2 days ago |
 | `--dry-run` | Report actions without writing files |
+| `--reprocess` | Ignore the processed-meetings log and re-analyze all meetings |
+| `--refresh-identity` | Force rebuild of each folder's `ai-generated/identity.json` |
 
-**Output:** transcript `.txt` files in the matched folder's `transcripts/` directory (under deals or portcos).
+**Output:** transcript `.txt` files in the matched folder's `transcripts/` directory (under deals or portcos). Also writes/updates `ai-generated/identity.json` per folder when missing or stale relative to `summary.md`.
 
 **Requires:** `GROQ_API_KEY`, `MEETGEEK_API_KEY`, `MEETGEEK_TEAM_ID`, `GOOGLE_DRIVE_BASE`
 
@@ -173,7 +182,7 @@ python fetch_all_transcripts.py [--cutoff-date DATE] [--dry-run]
 Fetches recent MeetGeek transcripts for a **single** company folder (last 8 days). Path must be rooted under `deals/` or `portcos/`.
 
 ```bash
-python fetch_transcripts.py <deals|portcos>/<folder>
+python fetch_transcripts.py <deals|portcos>/<folder> [--dry-run] [--refresh-identity]
 ```
 
 **Examples:**
@@ -183,7 +192,7 @@ python fetch_transcripts.py deals/Mobi
 python fetch_transcripts.py portcos/Central-Agent
 ```
 
-Uses documents to extract company/people identity, then scores each recent meeting for relevance. Writes matching transcripts as `.txt` files under the folder's `transcripts/` directory.
+Loads or builds `ai-generated/identity.json` (company, people, aliases, domains, product blurb, context brief), then scores each recent meeting for relevance against that rich identity. Writes matching transcripts as `.txt` files under the folder's `transcripts/` directory.
 
 **Requires:** `GROQ_API_KEY`, `MEETGEEK_API_KEY`, `GOOGLE_DRIVE_BASE`
 
@@ -191,15 +200,18 @@ Uses documents to extract company/people identity, then scores each recent meeti
 
 ### `process_emails.py`
 
-Fetches unread inbox mail, matches each message to a folder under `deals/` or `portcos/` with an LLM, and saves it as a `.txt` file. Successfully written messages are marked as read.
+Fetches unread inbox mail, matches each message to a folder under `deals/` or `portcos/`, and saves it as a `.txt` file. Successfully written messages are marked as read.
+
+Uses the same `identity.json` catalog as transcript fetch. Unique **strong** programmatic hits (company, full name, alias, email domain) can auto-match; first-name-only hits fall through to the LLM.
 
 ```bash
-python process_emails.py [--dry-run]
+python process_emails.py [--dry-run] [--refresh-identity]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Report matches without writing files or marking messages read |
+| `--refresh-identity` | Force rebuild of each folder's `ai-generated/identity.json` |
 
 **Output:** `email_<timestamp>_<subject>.txt` files in the matched folder's `emails/` directory (under deals or portcos).
 

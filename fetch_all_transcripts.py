@@ -15,13 +15,12 @@ from fetch_transcripts import (
     DealMatchTarget,
     ProcessedMeetingRecord,
     append_processed_meeting,
-    build_deal_payload,
-    collect_deal_context,
     deals_base,
-    extract_deal_identity,
+    empty_deal_identity,
     find_existing_transcript,
     find_matching_deal,
     format_transcript_text,
+    load_or_build_identity,
     load_processed_meeting_ids,
     meeting_date_label,
     migrate_processed_meetings_log,
@@ -88,6 +87,7 @@ def load_deal_catalog(
     *,
     api_key: str,
     model: str,
+    refresh_identity: bool = False,
 ) -> list[DealCatalogEntry]:
     catalog: list[DealCatalogEntry] = []
 
@@ -99,26 +99,20 @@ def load_deal_catalog(
         ):
             continue
 
-        documents = collect_deal_context(entry, summary_only=True)
-        if documents:
-            deal_payload = build_deal_payload(documents)
-            try:
-                identity = extract_deal_identity(
-                    deal_payload,
-                    deal_folder_name=entry.name,
-                    api_key=api_key,
-                    model=model,
-                )
-            except Exception as exc:
-                print(
-                    f"Warning: skipping deal {entry.name}; failed to extract identity: {exc}",
-                    file=sys.stderr,
-                )
-                continue
-        else:
-            # Empty / no-readable-docs folders stay matchable by folder name
-            # (e.g. first email into a new portco).
-            identity = DealIdentity(company_name=None, human_names=[])
+        try:
+            identity = load_or_build_identity(
+                entry,
+                api_key=api_key,
+                model=model,
+                refresh=refresh_identity,
+            )
+        except Exception as exc:
+            print(
+                f"Warning: using empty identity for {entry.name}; "
+                f"failed to load/build identity: {exc}",
+                file=sys.stderr,
+            )
+            identity = empty_deal_identity()
 
         catalog.append(
             DealCatalogEntry(
@@ -135,9 +129,15 @@ def load_combined_catalog(
     *,
     api_key: str,
     model: str,
+    refresh_identity: bool = False,
 ) -> list[DealCatalogEntry]:
     deals = deals_base()
-    catalog = load_deal_catalog(deals, api_key=api_key, model=model)
+    catalog = load_deal_catalog(
+        deals,
+        api_key=api_key,
+        model=model,
+        refresh_identity=refresh_identity,
+    )
     known_names = {entry.folder_name for entry in catalog}
 
     portcos = portcos_base()
@@ -148,7 +148,12 @@ def load_combined_catalog(
         )
         return catalog
 
-    for entry in load_deal_catalog(portcos, api_key=api_key, model=model):
+    for entry in load_deal_catalog(
+        portcos,
+        api_key=api_key,
+        model=model,
+        refresh_identity=refresh_identity,
+    ):
         if entry.folder_name in known_names:
             print(
                 f"Warning: skipping portcos/{entry.folder_name}; "
@@ -167,9 +172,12 @@ def print_deal_catalog(catalog: list[DealCatalogEntry]) -> None:
     for deal in catalog:
         company = deal.identity.company_name or "(none)"
         people = ", ".join(deal.identity.human_names) or "(none)"
+        aliases = ", ".join(deal.identity.aliases) or "(none)"
+        domains = ", ".join(deal.identity.email_domains) or "(none)"
         root = deal.folder.parent.name
         print(
-            f"  [{root}] {deal.folder_name}: company={company}; people={people}"
+            f"  [{root}] {deal.folder_name}: company={company}; "
+            f"people={people}; aliases={aliases}; domains={domains}"
         )
     print()
 
@@ -332,6 +340,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore the processed-meetings log and re-analyze all meetings.",
     )
+    parser.add_argument(
+        "--refresh-identity",
+        action="store_true",
+        help="Force rebuild of ai-generated/identity.json for all folders.",
+    )
     return parser.parse_args()
 
 
@@ -367,13 +380,17 @@ def main() -> int:
         print()
 
     try:
-        catalog = load_combined_catalog(api_key=api_key, model=model)
+        catalog = load_combined_catalog(
+            api_key=api_key,
+            model=model,
+            refresh_identity=args.refresh_identity,
+        )
     except Exception as exc:
         print(f"Error: failed to load deal catalog: {exc}", file=sys.stderr)
         return 1
 
     if not catalog:
-        print("Error: no deal folders with usable documents found", file=sys.stderr)
+        print("Error: no deal folders found", file=sys.stderr)
         return 1
 
     print_deal_catalog(catalog)

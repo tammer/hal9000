@@ -26,6 +26,7 @@ from fetch_all_transcripts import (
 from fetch_transcripts import (
     MatchResult,
     find_programmatic_deal_match_from_haystack,
+    format_identity_for_prompt,
     groq_json_chat,
 )
 
@@ -34,27 +35,27 @@ EMAILS_DIR_NAME = "emails"
 
 EMAIL_DEAL_MATCH_SYSTEM_PROMPT = """You decide which single startup folder an email belongs to.
 
-You are given email metadata, body text, and a catalog of deal and portfolio-company folders with their identities.
+You are given email metadata, body text, and a catalog of deal and portfolio-company folders with rich identities (company, people, aliases, email domains, product summary).
 
 Return valid JSON only with this exact shape:
 {"deal_folder": "FolderName" or null, "reason": "short explanation"}
 
-An email matches a folder when the company name and/or a person's name from that folder appears in the subject, sender, recipients, or body.
+An email matches a folder when the company name, alias, person's name, or email domain from that folder appears in the subject, sender, recipients, or body.
 
 Matching rules:
 - First-name matches count: "Jad" in a subject matches person "Jad Fadlallah" in folder "Jad"
 - Folder names are often a founder's first name; if the folder name appears in the email, that is strong evidence
-- Company name matches count when the company name clearly appears in the email
+- Company name and alias matches count when they clearly appear in the email
+- Matching sender/recipient domains against a folder's email_domains is strong evidence
 - The catalog includes both active deals and portfolio companies; treat them the same for matching
 - These Antler team members appear on ALL folders and must NEVER determine a match:
   Tammer Kamel, Shambhavi Mishra, Alex Wright, Daphne McLarty, Bernie Li
 - Do NOT match different similar-sounding names for different people (e.g. Chen is not Chan)
-- Do NOT infer company matches from email domains alone
 - Do NOT match based on shared generic topics alone
 - Return at most one deal_folder; if no folder matches, return null
-- If multiple folders could match, pick the one with the strongest name/company evidence; if still tied, return null
+- If multiple folders could match, pick the one with the strongest name/company/domain evidence; if still tied, return null
 
-reason must be one concise sentence. If deal_folder is set, name the matching company or person and the folder.
+reason must be one concise sentence. If deal_folder is set, name the matching company, person, alias, or domain and the folder.
 - deal_folder must be a folder name string or null; never include explanations in JSON values
 """
 
@@ -203,12 +204,9 @@ def find_existing_email(folder: Path, message_id: str) -> Path | None:
 def format_deal_catalog_for_prompt(catalog: list[DealCatalogEntry]) -> str:
     lines: list[str] = []
     for deal in catalog:
-        company = deal.identity.company_name or "(none)"
-        people = ", ".join(deal.identity.human_names) or "(none)"
         lines.append(
             f"- folder: {deal.folder_name}\n"
-            f"  company: {company}\n"
-            f"  people: {people}"
+            f"{format_identity_for_prompt(deal.identity, include_context_brief=False)}"
         )
     return "\n".join(lines)
 
@@ -434,6 +432,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Report matches without writing files or marking messages read.",
     )
+    parser.add_argument(
+        "--refresh-identity",
+        action="store_true",
+        help="Force rebuild of ai-generated/identity.json for all folders.",
+    )
     return parser.parse_args()
 
 
@@ -464,14 +467,18 @@ def main() -> int:
         return 1
 
     try:
-        catalog = load_combined_catalog(api_key=api_key, model=model)
+        catalog = load_combined_catalog(
+            api_key=api_key,
+            model=model,
+            refresh_identity=args.refresh_identity,
+        )
     except Exception as exc:
         print(f"Error: failed to load deal catalog: {exc}", file=sys.stderr)
         return 1
 
     if not catalog:
         print(
-            "Error: no folders with usable documents found under deals or portcos",
+            "Error: no folders found under deals or portcos",
             file=sys.stderr,
         )
         return 1
