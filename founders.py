@@ -500,10 +500,18 @@ def render_founders_md(doc: FoundersDoc) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_founders_md(folder: Path, doc: FoundersDoc) -> Path:
+def write_founders_md(folder: Path, doc: FoundersDoc) -> tuple[Path, bool]:
+    """Write Founders.md. Returns (path, changed). Skips write if content identical."""
     path = founders_md_write_path(folder)
-    path.write_text(render_founders_md(doc), encoding="utf-8")
-    return path
+    new_text = render_founders_md(doc)
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == new_text:
+                return path, False
+        except OSError:
+            pass
+    path.write_text(new_text, encoding="utf-8")
+    return path, True
 
 
 def load_existing_founders_doc(folder: Path) -> FoundersDoc | None:
@@ -1139,9 +1147,10 @@ def process_company_folder(
         )
 
     doc.status = compute_status(doc)
-    out_path = write_founders_md(folder, doc)
+    out_path, changed = write_founders_md(folder, doc)
     markdown = render_founders_md(doc)
-    print(f"Wrote {out_path} (Status: {doc.status})", file=sys.stderr)
+    action = "Wrote" if changed else "Unchanged"
+    print(f"{action} {out_path} (Status: {doc.status})", file=sys.stderr)
     print(markdown)
     return FolderOutcome(path=rel_path, status="ok", detail=doc.status)
 

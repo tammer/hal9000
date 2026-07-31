@@ -118,7 +118,14 @@ def read_file_as_text(path: Path) -> str | None:
 
 
 def _is_skipped_file(path: Path) -> bool:
-    return path.name.startswith(".") or path.name.startswith("~$")
+    name = path.name
+    if name.startswith(".") or name.startswith("~$"):
+        return True
+    # Derived founders sidecar — not a primary source for deal/summary pipelines.
+    lowered = name.lower()
+    if lowered == "founders.md" or lowered.startswith("founders.md."):
+        return True
+    return False
 
 
 def list_candidate_files(

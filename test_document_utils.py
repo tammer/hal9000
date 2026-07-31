@@ -44,6 +44,8 @@ class RecursiveDocumentDiscoveryTests(unittest.TestCase):
             root_forbidden = _write(root / "ai-generated" / "summary.md", "skip")
             _write(root / ".hidden.md", "hidden")
             _write(root / "~$temp.docx", "temp")
+            _write(root / "Founders.md", "founders")
+            _write(root / "Founders.md.bak-test", "founders bak")
 
             found = list_candidate_files(
                 root, recursive=True, exclude_dirs=FORBIDDEN_DIR_NAMES
@@ -52,6 +54,10 @@ class RecursiveDocumentDiscoveryTests(unittest.TestCase):
             self.assertEqual(set(found), {top, nested})
             self.assertNotIn(deep_forbidden, found)
             self.assertNotIn(root_forbidden, found)
+            self.assertTrue(all(path.name.lower() != "founders.md" for path in found))
+            self.assertTrue(
+                all(not path.name.lower().startswith("founders.md.") for path in found)
+            )
 
     def test_collect_documents_reads_nested_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

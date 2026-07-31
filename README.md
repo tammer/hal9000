@@ -172,7 +172,7 @@ python founders.py --all --refresh
 2. Otherwise extract founders from primary materials only (top-level docs, `emails/`, `transcripts/`; never `ai-generated/`), excluding `Founders.md` itself.
 3. Fill blanks only — never overwrite an existing LinkedIn URL or `unknown`.
 4. Resolve still-missing LinkedIns with Brave search first, HTTP title validation, and Groq Compound only as a validated fallback.
-5. Write `Founders.md` with `Status: complete` or `incomplete`.
+5. Write `Founders.md` only when content changed (`Status: complete` or `incomplete`). `Founders.md` is excluded from `deal.json` / Claude summary change detection so incomplete retries do not force summary regenerations.
 
 **Complete** means either `Status: complete` (manual stop), or ≥1 founder with first+last name and every founder has a `linkedin.com/in/...` URL or the literal `unknown`.
 
