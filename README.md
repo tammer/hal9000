@@ -169,9 +169,9 @@ python founders.py --all --refresh
 **Algo:**
 
 1. If `Founders.md` exists and is **complete**, skip (unless `--refresh`).
-2. Otherwise extract founders from `ai-generated/summary.md`, `identity.json`, and top-level docs (excluding `Founders.md` itself).
+2. Otherwise extract founders from primary materials only (top-level docs, `emails/`, `transcripts/`; never `ai-generated/`), excluding `Founders.md` itself.
 3. Fill blanks only — never overwrite an existing LinkedIn URL or `unknown`.
-4. Resolve still-missing LinkedIns via Groq Compound web search (`groq/compound`).
+4. Resolve still-missing LinkedIns with Brave search first, HTTP title validation, and Groq Compound only as a validated fallback.
 5. Write `Founders.md` with `Status: complete` or `incomplete`.
 
 **Complete** means either `Status: complete` (manual stop), or ≥1 founder with first+last name and every founder has a `linkedin.com/in/...` URL or the literal `unknown`.
