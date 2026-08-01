@@ -9,9 +9,10 @@ Usage:
 
 Reads primary materials only (top-level docs, emails/, transcripts/; never
 ai-generated/), excluding Founders.md. Extracts founders with Groq JSON mode,
-then resolves missing LinkedIn URLs via Brave search + optional Compound
-propose, each validated by HTTP title check. Writes Founders.md at the company
-folder root.
+then resolves missing LinkedIn URLs via Brave search (company + location,
+default Canada) + optional Compound propose. A URL is written only when an
+HTTP fetch confirms the profile page and the name matches. Writes Founders.md
+at the company folder root.
 
 Skips when Founders.md is already complete. Incomplete files are retried with
 fill-blanks-only merging so human edits are preserved.
@@ -24,6 +25,7 @@ import json
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -71,9 +73,50 @@ OG_TITLE_RE = re.compile(
     r'property=["\']og:title["\']\s+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
+# www.linkedin.com and country subdomains (ca.linkedin.com, uk.linkedin.com, …)
 LINKEDIN_IN_RE = re.compile(
-    r"https?://(?:www\.)?linkedin\.com/in/[A-Za-z0-9_-]+/?",
+    r"https?://(?:www\.|[a-z]{2}\.)?linkedin\.com/in/[A-Za-z0-9_-]+/?",
     re.IGNORECASE,
+)
+DEFAULT_LOCATION = "Canada"
+# Common first-name variants seen on LinkedIn vs deal materials.
+FIRST_NAME_ALIASES: dict[str, frozenset[str]] = {
+    "jake": frozenset({"jake", "jakob", "jacob"}),
+    "jakob": frozenset({"jake", "jakob", "jacob"}),
+    "jacob": frozenset({"jake", "jakob", "jacob"}),
+    "mike": frozenset({"mike", "michael"}),
+    "michael": frozenset({"mike", "michael"}),
+    "matt": frozenset({"matt", "matthew"}),
+    "matthew": frozenset({"matt", "matthew"}),
+    "chris": frozenset({"chris", "christopher"}),
+    "christopher": frozenset({"chris", "christopher"}),
+    "alex": frozenset({"alex", "alexander", "alexandra"}),
+    "alexander": frozenset({"alex", "alexander"}),
+    "alexandra": frozenset({"alex", "alexandra"}),
+    "sam": frozenset({"sam", "samuel", "samantha"}),
+    "samuel": frozenset({"sam", "samuel"}),
+    "samantha": frozenset({"sam", "samantha"}),
+    "josh": frozenset({"josh", "joshua"}),
+    "joshua": frozenset({"josh", "joshua"}),
+    "dan": frozenset({"dan", "daniel"}),
+    "daniel": frozenset({"dan", "daniel"}),
+    "ben": frozenset({"ben", "benjamin"}),
+    "benjamin": frozenset({"ben", "benjamin"}),
+    "nick": frozenset({"nick", "nicholas"}),
+    "nicholas": frozenset({"nick", "nicholas"}),
+    "tom": frozenset({"tom", "thomas"}),
+    "thomas": frozenset({"tom", "thomas"}),
+    "will": frozenset({"will", "william"}),
+    "william": frozenset({"will", "william"}),
+    "joe": frozenset({"joe", "joseph"}),
+    "joseph": frozenset({"joe", "joseph"}),
+    "steve": frozenset({"steve", "stephen", "steven"}),
+    "stephen": frozenset({"steve", "stephen"}),
+    "steven": frozenset({"steve", "steven"}),
+}
+LOCATION_LINE_RE = re.compile(
+    r"^(?:location|based\s+in|hq|headquarters|country|city)\s*[:\-]\s*(.+)$",
+    re.IGNORECASE | re.MULTILINE,
 )
 COMPANY_LINE_RE = re.compile(r"^Company:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 STATUS_LINE_RE = re.compile(r"^Status:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
@@ -129,10 +172,13 @@ Return valid JSON only with this exact shape:
 
 Rules:
 - Search for the person's public LinkedIn personal profile (linkedin.com/in/...), not a company page, search page, or posts.
-- Prefer a profile clearly associated with the given company / startup.
+- Prefer a profile clearly associated with the given company / startup and location.
+- Include the company name and location in your search queries.
+- Country subdomain URLs (e.g. ca.linkedin.com/in/...) are acceptable; return them as found.
 - The linkedin_url MUST appear verbatim in a search result. Never invent or guess a slug.
 - Never construct firstname-lastname-######## URLs. If no LinkedIn /in/ URL appears in results, return linkedin_url null and confidence "none".
 - Only return confidence "high" when the search result title/snippet clearly matches the person (and ideally the company). Otherwise use "medium", "low", or "none".
+- First-name variants are OK when the surname matches (e.g. Jake vs Jakob).
 - Return the exact full_name you were given.
 """
 
@@ -256,13 +302,13 @@ def normalize_linkedin_url(url: str | None) -> str | None:
     found = match.group(0).rstrip("/")
     if found.lower().startswith("http://"):
         found = "https://" + found[7:]
-    if "://www.linkedin.com/" not in found.lower():
-        found = re.sub(
-            r"^(https://)linkedin\.com/",
-            r"\1www.linkedin.com/",
-            found,
-            flags=re.IGNORECASE,
-        )
+    # Normalize bare and country-subdomain hosts to www.linkedin.com.
+    found = re.sub(
+        r"^(https://)(?:www\.|[a-z]{2}\.)?linkedin\.com/",
+        r"\1www.linkedin.com/",
+        found,
+        flags=re.IGNORECASE,
+    )
     if looks_like_placeholder_slug(found):
         return None
     return found
@@ -270,6 +316,12 @@ def normalize_linkedin_url(url: str | None) -> str | None:
 
 def linkedin_slug(url: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def linkedin_slug_name_parts(url: str) -> str:
+    """Slug with trailing LinkedIn id suffix removed (e.g. -50a974356)."""
+    slug = linkedin_slug(url).lower()
+    return re.sub(r"-[a-z0-9]{5,}$", "", slug)
 
 
 def looks_like_placeholder_slug(url: str) -> bool:
@@ -287,23 +339,220 @@ def looks_like_placeholder_slug(url: str) -> bool:
     return digits in ascending or digits in descending or digits == digits[0] * len(digits)
 
 
-def name_tokens(full_name: str) -> set[str]:
-    return {
+def name_tokens(full_name: str) -> list[str]:
+    """Ordered alphabetic name tokens (len > 1), splitting on non-word chars."""
+    return [
         token.lower()
         for token in re.split(r"\W+", full_name)
         if token and len(token) > 1
-    }
+    ]
+
+
+def token_in_text(token: str, text: str) -> bool:
+    """Whole-word / slug-segment match; avoids 'sol' matching 'soloff'."""
+    if not token or not text:
+        return False
+    return bool(
+        re.search(
+            rf"(?<![a-z0-9]){re.escape(token.lower())}(?![a-z0-9])",
+            text.lower(),
+        )
+    )
+
+
+def first_name_compatible(expected: str, candidate: str) -> bool:
+    """True when first names match exactly or via known aliases."""
+    left = expected.lower().strip()
+    right = candidate.lower().strip()
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    left_set = FIRST_NAME_ALIASES.get(left, frozenset({left}))
+    right_set = FIRST_NAME_ALIASES.get(right, frozenset({right}))
+    return bool(left_set & right_set)
+
+
+def first_name_in_text(first: str, text: str) -> bool:
+    """True when text contains the first name or a known alias."""
+    if token_in_text(first, text):
+        return True
+    for alias in FIRST_NAME_ALIASES.get(first.lower(), frozenset()):
+        if alias != first.lower() and token_in_text(alias, text):
+            return True
+    return False
 
 
 def text_matches_name(text: str, full_name: str) -> bool:
+    """True when text contains the person's first name and all last-name tokens.
+
+    Uses word-boundary matching so hyphenated surnames like Sol-Strozberg do
+    not false-positive on unrelated names like Soloff. Allows known first-name
+    aliases (Jake ↔ Jakob).
+    """
     tokens = name_tokens(full_name)
     if not tokens or not text:
         return False
-    lowered = text.lower()
-    hits = sum(1 for token in tokens if token in lowered)
     if len(tokens) == 1:
-        return hits >= 1
-    return hits >= 2
+        return first_name_in_text(tokens[0], text)
+    first, *last_tokens = tokens
+    if not first_name_in_text(first, text):
+        return False
+    return all(token_in_text(token, text) for token in last_tokens)
+
+
+def slug_supports_name(url: str, full_name: str) -> bool:
+    """True when the LinkedIn slug positively encodes the person's name.
+
+    Handles mashed slugs like saumyabanker and hyphenated
+    jake-sol-strozberg / jakob-sol-strozberg.
+    """
+    normalized = normalize_linkedin_url(url)
+    if not normalized:
+        return False
+    tokens = name_tokens(full_name)
+    if len(tokens) < 2:
+        return False
+    first, *last_tokens = tokens
+    last_compact = "".join(last_tokens)
+
+    slug = linkedin_slug_name_parts(normalized)
+    slug_alpha = re.sub(r"[^a-z]", "", slug)
+    if not slug_alpha:
+        return False
+
+    # Compact mash: saumyabanker, jakesolstrozberg
+    alias_firsts = FIRST_NAME_ALIASES.get(first, frozenset({first}))
+    for alias in alias_firsts:
+        if slug_alpha == alias + last_compact:
+            return True
+        if any(slug_alpha == alias + lt for lt in last_tokens):
+            return True
+
+    slug_tokens = [
+        tok
+        for tok in re.split(r"[-_]+", slug)
+        if tok and re.search(r"[a-z]{2,}", tok)
+    ]
+    if not slug_tokens:
+        return False
+
+    first_hit = any(
+        first_name_compatible(first, re.sub(r"\d+", "", tok))
+        for tok in slug_tokens
+    )
+    last_hits = all(
+        any(
+            re.sub(r"\d+", "", tok) == lt
+            or re.sub(r"\d+", "", tok).endswith(lt)
+            for tok in slug_tokens
+        )
+        for lt in last_tokens
+    )
+    if first_hit and last_hits:
+        return True
+    # initial + last mash already covered above; also accept last-only hyphen
+    # slugs only when every last token appears and first initial matches.
+    if last_hits and slug_tokens:
+        head = re.sub(r"\d+", "", slug_tokens[0])
+        if len(head) == 1 and head == first[0]:
+            return True
+    return False
+
+
+def resolve_search_location(materials: str, explicit: str | None = None) -> str:
+    """Return a location hint for LinkedIn search; default Canada."""
+    if explicit and explicit.strip():
+        return explicit.strip()
+    if materials:
+        match = LOCATION_LINE_RE.search(materials)
+        if match:
+            value = match.group(1).strip().strip(".,;")
+            if value:
+                # Keep short location phrases only.
+                if len(value) <= 80:
+                    return value
+    return DEFAULT_LOCATION
+
+
+def context_mentions(text: str, *needles: str | None) -> bool:
+    lowered = (text or "").lower()
+    for needle in needles:
+        if not needle:
+            continue
+        cleaned = needle.strip().lower()
+        if cleaned and cleaned in lowered:
+            return True
+    return False
+
+
+def slug_surname_conflict(url: str, full_name: str) -> bool:
+    """True when the LinkedIn slug clearly encodes a different surname.
+
+    Catches cases where search title/snippet echo the query name but the
+    /in/ slug belongs to someone else (e.g. Saumya Banker vs saumya-singh-...).
+    Opaque vanity slugs without a conflicting surname token return False.
+    """
+    normalized = normalize_linkedin_url(url)
+    if not normalized:
+        return False
+
+    tokens = name_tokens(full_name)
+    if len(tokens) < 2:
+        return False
+    first, *last_tokens = tokens
+    last_compact = "".join(last_tokens)
+
+    slug = linkedin_slug_name_parts(normalized)
+    slug_tokens = [
+        tok
+        for tok in re.split(r"[-_]+", slug)
+        if tok and re.search(r"[a-z]{3,}", tok)
+    ]
+
+    def matches_first(token: str) -> bool:
+        alpha = re.sub(r"\d+", "", token)
+        if not alpha:
+            return False
+        if first_name_compatible(first, alpha):
+            return True
+        if alpha == first or first.startswith(alpha) or alpha.startswith(first):
+            return True
+        # Common initial+last mashups: sdubey, jsolstrozberg
+        alias_firsts = FIRST_NAME_ALIASES.get(first, frozenset({first}))
+        for alias in alias_firsts:
+            if any(alpha == alias[0] + lt for lt in last_tokens):
+                return True
+            if alpha == alias[0] + last_compact:
+                return True
+            for n in range(1, min(4, len(alias) + 1)):
+                if any(alpha == alias[:n] + lt for lt in last_tokens):
+                    return True
+                if alpha == alias[:n] + last_compact:
+                    return True
+        return False
+
+    def matches_last(token: str) -> bool:
+        alpha = re.sub(r"\d+", "", token)
+        if not alpha:
+            return False
+        if alpha in last_tokens or alpha == last_compact:
+            return True
+        # Allow mashups that still contain the full last token as a suffix.
+        if any(alpha.endswith(lt) and len(lt) >= 3 for lt in last_tokens):
+            return True
+        if alpha.endswith(last_compact) and len(last_compact) >= 3:
+            return True
+        return False
+
+    for token in slug_tokens:
+        if matches_first(token) or matches_last(token):
+            continue
+        alpha = re.sub(r"\d+", "", token)
+        # Alphabetic surname-like slug segment that matches neither name part.
+        if len(alpha) >= 4 and alpha.isalpha():
+            return True
+    return False
 
 
 def is_searchable_person_name(full_name: str) -> bool:
@@ -332,6 +581,8 @@ def validate_linkedin_profile(url: str, full_name: str) -> LinkedInVerdict:
     """Check a LinkedIn profile URL via HTTP + page title name match."""
     normalized = normalize_linkedin_url(url)
     if not normalized:
+        return "invalid"
+    if slug_surname_conflict(normalized, full_name):
         return "invalid"
 
     try:
@@ -381,6 +632,16 @@ def validate_linkedin_profile(url: str, full_name: str) -> LinkedInVerdict:
         return "inconclusive"
 
     if text_matches_name(combined, full_name):
+        return "valid"
+
+    # Abbreviated titles like "Saumya B. | LinkedIn" still count when the slug
+    # encodes the full name and the visible first name matches.
+    tokens = name_tokens(full_name)
+    if (
+        tokens
+        and slug_supports_name(normalized, full_name)
+        and first_name_in_text(tokens[0], combined)
+    ):
         return "valid"
 
     # Public profile page with a clear LinkedIn title but wrong person.
@@ -713,23 +974,29 @@ def merge_regex_linkedin_urls(
     for url in urls:
         if url.lower() in assigned:
             continue
-        slug = url.rstrip("/").rsplit("/", 1)[-1].lower().replace("-", " ")
-        slug_tokens = set(slug.split())
         best: dict[str, Any] | None = None
         best_score = 0
         for founder in founders:
             if founder.get("linkedin_url"):
                 continue
-            name_tokens = {
-                t.lower()
-                for t in re.split(r"\W+", founder["full_name"])
-                if t
-            }
-            score = len(slug_tokens & name_tokens)
+            full_name = str(founder.get("full_name") or "")
+            if slug_surname_conflict(url, full_name):
+                continue
+            tokens = name_tokens(full_name)
+            if not tokens:
+                continue
+            # Multi-part names must have a last-name token in the slug.
+            if len(tokens) >= 2 and not any(
+                token_in_text(token, url) for token in tokens[1:]
+            ):
+                continue
+            score = sum(1 for token in tokens if token_in_text(token, url))
+            if score < 1:
+                continue
             if score > best_score:
                 best_score = score
                 best = founder
-        if best is not None and best_score >= 1:
+        if best is not None:
             best["linkedin_url"] = url
             assigned.add(url.lower())
 
@@ -742,22 +1009,78 @@ class LinkedInCandidate:
     source: str = ""  # brave | compound
 
 
+def build_linkedin_search_queries(
+    founder: Founder,
+    company_name: str | None,
+    location: str | None,
+) -> list[str]:
+    """Ordered Brave queries: company + location first, bare name last."""
+    name = founder.full_name.strip()
+    company = (company_name or "").strip()
+    loc = (location or DEFAULT_LOCATION).strip() or DEFAULT_LOCATION
+    queries: list[str] = []
+
+    def add(query: str) -> None:
+        q = " ".join(query.split())
+        if q and q not in queries:
+            queries.append(q)
+
+    if company:
+        add(f'{name} {company} {loc} site:linkedin.com/in')
+        add(f'"{name}" {company} {loc} LinkedIn')
+        add(f"{name} {company} founder {loc} LinkedIn")
+        add(f'{name} {company} site:linkedin.com/in')
+        add(f'"{name}" {company} LinkedIn')
+    add(f'"{name}" {loc} site:linkedin.com/in')
+    add(f'"{name}" {loc} LinkedIn')
+    # Surname-focused query helps when LinkedIn uses a first-name variant.
+    tokens = name_tokens(name)
+    if len(tokens) >= 2:
+        surname = " ".join(tokens[1:])
+        if company:
+            add(f'"{surname}" {company} {loc} site:linkedin.com/in')
+        add(f'"{surname}" {loc} site:linkedin.com/in')
+    add(f'"{name}" site:linkedin.com/in')
+    return queries
+
+
+def candidate_rank_key(
+    candidate: LinkedInCandidate,
+    founder: Founder,
+    company_name: str | None,
+    location: str | None,
+) -> tuple[int, int, int, int]:
+    """Lower is better: name match, slug support, company, location."""
+    haystack = f"{candidate.title} {candidate.snippet}"
+    name_ok = 0 if text_matches_name(haystack, founder.full_name) else 1
+    slug_ok = 0 if slug_supports_name(candidate.url, founder.full_name) else 1
+    company_ok = 0 if context_mentions(haystack, company_name) else 1
+    location_ok = 0 if context_mentions(haystack, location, DEFAULT_LOCATION) else 1
+    return (name_ok, slug_ok, company_ok, location_ok)
+
+
 def brave_linkedin_candidates(
     founder: Founder,
     company_name: str | None,
+    location: str | None = None,
 ) -> list[LinkedInCandidate]:
     """Return LinkedIn /in/ URLs found via Brave search (not model-invented)."""
-    company = (company_name or "").strip()
-    queries: list[str] = []
-    if company:
-        queries.append(f'{founder.full_name} {company} site:linkedin.com/in')
-        queries.append(f'"{founder.full_name}" {company} LinkedIn')
-    queries.append(f'"{founder.full_name}" site:linkedin.com/in')
+    loc = (location or DEFAULT_LOCATION).strip() or DEFAULT_LOCATION
+    queries = build_linkedin_search_queries(founder, company_name, loc)
+    print(
+        f"Brave LinkedIn queries for {founder.full_name} "
+        f"(company={company_name or 'unknown'}, location={loc}):",
+        file=sys.stderr,
+    )
+    for query in queries:
+        print(f"  - {query}", file=sys.stderr)
 
     seen: set[str] = set()
     candidates: list[LinkedInCandidate] = []
 
-    for query in queries:
+    for index, query in enumerate(queries):
+        if index:
+            time.sleep(0.8)
         try:
             results = search_brave(query, max_results=8)
         except Exception as exc:
@@ -774,6 +1097,8 @@ def brave_linkedin_candidates(
                     url = normalize_linkedin_url(match.group(0))
                     if not url or url.lower() in seen:
                         continue
+                    if slug_surname_conflict(url, founder.full_name):
+                        continue
                     seen.add(url.lower())
                     candidates.append(
                         LinkedInCandidate(
@@ -784,20 +1109,19 @@ def brave_linkedin_candidates(
                         )
                     )
 
-        # Early stop when we already have name-matching Brave hits.
+        # Early stop when we already have a strong company-corroborated hit.
         if any(
-            text_matches_name(f"{c.title} {c.snippet}", founder.full_name)
+            (
+                text_matches_name(f"{c.title} {c.snippet}", founder.full_name)
+                or slug_supports_name(c.url, founder.full_name)
+            )
+            and context_mentions(f"{c.title} {c.snippet}", company_name)
             for c in candidates
         ):
             break
 
-    # Prefer candidates whose search title/snippet mention the person.
     candidates.sort(
-        key=lambda c: (
-            0
-            if text_matches_name(f"{c.title} {c.snippet}", founder.full_name)
-            else 1
-        )
+        key=lambda c: candidate_rank_key(c, founder, company_name, loc)
     )
     return candidates
 
@@ -806,16 +1130,20 @@ def compound_propose_linkedin(
     *,
     founder: Founder,
     company_name: str | None,
+    location: str | None,
     api_key: str,
     model: str,
 ) -> str | None:
     """Ask Compound for one LinkedIn URL. Caller must validate the result."""
     company = company_name or "(unknown company)"
+    loc = (location or DEFAULT_LOCATION).strip() or DEFAULT_LOCATION
     user_prompt = (
-        f"Company / startup: {company}\n\n"
+        f"Company / startup: {company}\n"
+        f"Location: {loc}\n\n"
         "Find the LinkedIn personal profile URL for this founder:\n"
         f"{json.dumps({'full_name': founder.full_name, 'first_name': founder.first_name, 'last_name': founder.last_name}, indent=2)}\n\n"
-        "Search the web. Return JSON as specified. "
+        f'Search using the company name and location (e.g. "{founder.full_name} '
+        f'{company} {loc} LinkedIn"). Return JSON as specified. '
         "If the URL is not present in search results, return null."
     )
 
@@ -888,49 +1216,76 @@ def compound_propose_linkedin(
 def accept_linkedin_candidate(
     candidate: LinkedInCandidate,
     full_name: str,
+    *,
+    company_name: str | None = None,
+    location: str | None = None,
 ) -> str | None:
-    """Validate a candidate; accept Brave-corroborated inconclusive hits."""
-    verdict = validate_linkedin_profile(candidate.url, full_name)
-    if verdict == "valid":
+    """Accept a candidate only when HTTP validation returns valid.
+
+    Brave/Compound search hits are necessary but not sufficient: LinkedIn search
+    indexes often retain dead /in/ slugs. Never write a URL we cannot fetch and
+    name-match. ``company_name`` / ``location`` are retained for call-site
+    symmetry with search ranking; acceptance is HTTP-gated only.
+    """
+    _ = (company_name, location)
+    url = normalize_linkedin_url(candidate.url)
+    if not url:
+        return None
+    if slug_surname_conflict(url, full_name):
         print(
-            f"Validated LinkedIn for {full_name} via {candidate.source}: "
-            f"{candidate.url}",
-            file=sys.stderr,
-        )
-        return candidate.url
-    if verdict == "invalid":
-        print(
-            f"Rejected LinkedIn for {full_name} ({candidate.source}, invalid): "
-            f"{candidate.url}",
+            f"Rejected LinkedIn for {full_name} ({candidate.source}, "
+            f"slug surname conflict): {url}",
             file=sys.stderr,
         )
         return None
 
-    # HTTP inconclusive (bot wall). Trust Brave only when the search hit
-    # title/snippet already names the person.
-    brave_ok = text_matches_name(
-        f"{candidate.title} {candidate.snippet}", full_name
-    )
-    if candidate.source == "brave" and brave_ok:
+    verdict = validate_linkedin_profile(url, full_name)
+    if verdict == "valid":
         print(
-            f"Accepting Brave-corroborated LinkedIn for {full_name} "
-            f"(HTTP inconclusive): {candidate.url}",
+            f"Validated LinkedIn for {full_name} via {candidate.source}: {url}",
             file=sys.stderr,
         )
-        return candidate.url
+        return url
 
     print(
-        f"Skipping LinkedIn for {full_name} ({candidate.source}, inconclusive): "
-        f"{candidate.url}",
+        f"Rejected LinkedIn for {full_name} ({candidate.source}, {verdict}): "
+        f"{url}",
         file=sys.stderr,
     )
     return None
+
+
+def clear_unverified_linkedins(doc: FoundersDoc) -> int:
+    """Drop LinkedIn URLs that do not pass HTTP+name validation.
+
+    Preserves explicit ``unknown`` markers. Used on --refresh so stale search
+    hits are not sticky.
+    """
+    cleared = 0
+    for founder in doc.founders:
+        if not founder.linkedin_is_set():
+            continue
+        value = (founder.linkedin or "").strip()
+        if value.lower() == LINKEDIN_UNKNOWN:
+            continue
+        verdict = validate_linkedin_profile(value, founder.full_name)
+        if verdict == "valid":
+            continue
+        print(
+            f"Clearing unverified LinkedIn for {founder.full_name} "
+            f"({verdict}): {value}",
+            file=sys.stderr,
+        )
+        founder.linkedin = None
+        cleared += 1
+    return cleared
 
 
 def resolve_one_linkedin(
     *,
     founder: Founder,
     company_name: str | None,
+    location: str | None,
     api_key: str,
     compound_model: str,
 ) -> str | None:
@@ -945,14 +1300,22 @@ def resolve_one_linkedin(
         )
         return None
 
+    loc = (location or DEFAULT_LOCATION).strip() or DEFAULT_LOCATION
     print(
         f"Resolving LinkedIn for {founder.full_name} "
-        f"(company={company_name or 'unknown'}) ...",
+        f"(company={company_name or 'unknown'}, location={loc}) ...",
         file=sys.stderr,
     )
 
-    for candidate in brave_linkedin_candidates(founder, company_name):
-        accepted = accept_linkedin_candidate(candidate, founder.full_name)
+    for candidate in brave_linkedin_candidates(
+        founder, company_name, location=loc
+    ):
+        accepted = accept_linkedin_candidate(
+            candidate,
+            founder.full_name,
+            company_name=company_name,
+            location=loc,
+        )
         if accepted:
             return accepted
 
@@ -960,6 +1323,7 @@ def resolve_one_linkedin(
         proposed = compound_propose_linkedin(
             founder=founder,
             company_name=company_name,
+            location=loc,
             api_key=api_key,
             model=compound_model,
         )
@@ -975,6 +1339,8 @@ def resolve_one_linkedin(
         accepted = accept_linkedin_candidate(
             LinkedInCandidate(url=proposed, source="compound"),
             founder.full_name,
+            company_name=company_name,
+            location=loc,
         )
         if accepted:
             return accepted
@@ -989,6 +1355,7 @@ def resolve_one_linkedin(
 def resolve_missing_linkedins(
     *,
     company_name: str | None,
+    location: str | None,
     founders_missing: list[Founder],
     api_key: str,
     compound_model: str,
@@ -998,6 +1365,7 @@ def resolve_missing_linkedins(
         results[founder.full_name] = resolve_one_linkedin(
             founder=founder,
             company_name=company_name,
+            location=location,
             api_key=api_key,
             compound_model=compound_model,
         )
@@ -1077,6 +1445,14 @@ def process_company_folder(
         print(f"Skipped (complete): {rel_path}")
         return FolderOutcome(path=rel_path, status="skipped_complete")
 
+    if refresh and existing is not None:
+        cleared = clear_unverified_linkedins(existing)
+        if cleared:
+            print(
+                f"Refresh: cleared {cleared} unverified LinkedIn URL(s)",
+                file=sys.stderr,
+            )
+
     print(f"Resolving founders for {rel_path} ...", file=sys.stderr)
 
     materials, sources = collect_materials(folder)
@@ -1114,6 +1490,14 @@ def process_company_folder(
         merge_regex_linkedin_urls(extracted_founders, materials)
 
     doc = fill_blanks_merge(existing, extracted_company, extracted_founders)
+    if not doc.company_name:
+        doc.company_name = folder.name
+
+    location = resolve_search_location(materials)
+    print(
+        f"LinkedIn search context: company={doc.company_name}, location={location}",
+        file=sys.stderr,
+    )
 
     missing = [f for f in doc.founders if not f.linkedin_is_set()]
     if missing and not skip_web_search:
@@ -1125,6 +1509,7 @@ def process_company_folder(
         try:
             resolved = resolve_missing_linkedins(
                 company_name=doc.company_name,
+                location=location,
                 founders_missing=missing,
                 api_key=api_key,
                 compound_model=compound_model,
