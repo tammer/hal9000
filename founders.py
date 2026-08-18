@@ -45,7 +45,7 @@ from paths import (
     resolve_company_folder,
 )
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 COMPOUND_MODEL = "groq/compound"
 AI_GENERATED_DIR = "ai-generated"
 FOUNDERS_MD_NAME = "Founders.md"

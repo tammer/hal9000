@@ -1406,7 +1406,7 @@ def main() -> int:
         print("Error: GROQ_API_KEY is not set", file=sys.stderr)
         return 1
 
-    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
     try:
         folder = resolve_company_folder_path(args.relative_path)

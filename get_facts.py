@@ -24,7 +24,7 @@ MODELS = [
     "claude-sonnet-4-5",     # 6
     "claude-haiku-4-5",      # 7
     "claude-fable-5",        # 8
-    "llama-3.3-70b-versatile",  # 9
+    "openai/gpt-oss-120b",  # 9
 ]
 
 SEARCH_PLANNER_MODEL = MODELS[9]

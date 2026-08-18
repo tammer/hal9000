@@ -29,7 +29,7 @@ CONTENT_TYPES: tuple[ContentType, ...] = (
     "unknown",
 )
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 CONTENT_SAMPLE_CHARS = 2_000
 
 CLASSIFIER_SYSTEM_PROMPT = """You classify documents in an Antler deal folder.

@@ -31,7 +31,7 @@ from prompt_context import ORG_CONTEXT
 
 __all__ = ["meeting_roundup"]
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 SUMMARY_INSTRUCTIONS = f"""{ORG_CONTEXT}
 

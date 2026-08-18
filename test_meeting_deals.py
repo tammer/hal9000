@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from fetch_transcripts import format_transcript_text, groq_json_chat
 from meetgeek_client import MeetGeekError, get_meeting, get_transcript
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 SYSTEM_PROMPT = """You are an expert venture capital analyst reviewing a meeting transcript.
 

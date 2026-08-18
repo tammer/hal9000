@@ -18,7 +18,7 @@ from document_utils import read_file_as_text
 from fetch_transcripts import TRANSCRIPT_FILENAME_MARKER, groq_json_chat
 from generate_contents import resolve_folder_path
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 EMAIL_FILENAME_PREFIX = "email_"
 ALLOWED_EXTENSIONS = frozenset({".md", ".txt", ".docx", ".gdoc"})
 ALLOWED_AUTHORS = frozenset(

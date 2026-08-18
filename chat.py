@@ -10,7 +10,7 @@ from groq import Groq
 
 Provider = Literal["groq", "anthropic"]
 
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 DEFAULT_MAX_TOKENS = 4096

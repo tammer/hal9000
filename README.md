@@ -26,7 +26,7 @@ python run_pipeline.py
 | `GOOGLE_DRIVE_BASE` | Most scripts | Canada shared-drive root containing `deals/`, `portcos/`, `ai-generated/`, and `facts.md` |
 | `WEBSITE_BASE` | `generate_website.py` | Parent directory where `website/` output is written |
 | `GROQ_API_KEY` | Transcript fetch, emails, summarizer, `founders.py`, `daily_summary.py`, `daily_summary_portco.py`, `main.py`, `get_facts`, `consolidator.py` | Groq API key |
-| `GROQ_MODEL` | Optional | Groq model (default: `llama-3.3-70b-versatile`) |
+| `GROQ_MODEL` | Optional | Groq model (default: `openai/gpt-oss-120b`) |
 | `ANTHROPIC_API_KEY` | `claude_summary.py`, `chat.py`, `researcher.py` | Anthropic API key |
 | `ANTHROPIC_MODEL` | Optional | Default Anthropic model for `chat.py` |
 | `MEETGEEK_API_KEY` | Transcript fetch scripts | MeetGeek API key |

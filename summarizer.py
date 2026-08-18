@@ -12,7 +12,7 @@ from groq import Groq
 from get_facts import parse_json_response
 from paths import deals_base, list_company_folders, shared_ai_dir
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 EXTRACTOR_SYSTEM_PROMPT = """You extract structured deal information from an investment summary markdown document.
 

@@ -25,7 +25,7 @@ from prompt_context import ORG_CONTEXT
 
 __all__ = ["generate_daily_summary"]
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 DEAL_JSON_NAME = "deal.json"
 
 
