@@ -18,6 +18,7 @@ from document_utils import (
     collect_documents,
     extract_gdoc_text,
     list_candidate_files,
+    read_file_as_text,
 )
 
 
@@ -151,6 +152,34 @@ class GdocExtractionTests(unittest.TestCase):
                 json.dumps({"email": "user@example.com"}),
             )
             self.assertIsNone(extract_gdoc_text(path))
+
+
+class ReadFileAsTextBinaryHeuristicTests(unittest.TestCase):
+    def test_utf8_mailchimp_spacers_are_text(self) -> None:
+        spacer = "\u034f \u200c   \u2007 "
+        body = (
+            "Subject: Fwd: Investor Update\n\n"
+            + (spacer * 400)
+            + "\nHi Tammer,\nCash-in-bank: US$420K\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "email.txt"
+            path.write_bytes(body.encode("utf-8"))
+            text = read_file_as_text(path)
+            self.assertIsNotNone(text)
+            self.assertIn("Cash-in-bank: US$420K", text)
+
+    def test_nul_bytes_are_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "blob.bin"
+            path.write_bytes(b"hello\x00world")
+            self.assertIsNone(read_file_as_text(path))
+
+    def test_non_utf8_high_bit_junk_is_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "junk.dat"
+            path.write_bytes(bytes(range(128, 256)) * 40)
+            self.assertIsNone(read_file_as_text(path))
 
 
 if __name__ == "__main__":

@@ -105,16 +105,18 @@ def read_file_as_text(path: Path) -> str | None:
         return extract_gdoc_text(path)
 
     data = path.read_bytes()
+    if b"\x00" in data[:BINARY_SAMPLE_SIZE]:
+        return None
+
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+
     if is_likely_binary(data):
         return None
 
-    for encoding in ("utf-8", "latin-1"):
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-
-    return data.decode("utf-8", errors="replace")
+    return data.decode("latin-1")
 
 
 def _is_skipped_file(path: Path) -> bool:
