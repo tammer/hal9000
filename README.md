@@ -82,7 +82,7 @@ Most scripts read **top-level files only** in each company folder (not recursive
 **CLI path conventions:**
 
 - Deal scripts (`process_deal.py`, `claude_summary2.py`, …): folder name under `deals/` (e.g. `Mobi`)
-- Portco scripts (`process_portco.py`, `generate_portco_report.py`): folder name under `portcos/` (e.g. `Central-Agent`)
+- Portco scripts (`process_portco.py`, `generate_portco_report.py`, `coaching_note.py`): folder name under `portcos/` (e.g. `Central-Agent`)
 - Ingest CLIs (`fetch_transcripts.py`): `deals/<folder>` or `portcos/<folder>`
 
 ---
@@ -371,6 +371,28 @@ python generate_portco_report.py Central-Agent
 ```
 
 **Output:** `portcos/<folder>/ai-generated/summary.md`
+
+**Requires:** `ANTHROPIC_API_KEY`, `GOOGLE_DRIVE_BASE`
+
+---
+
+### `coaching_note.py`
+
+Generates a short coaching note from the most recent transcript under a portfolio company's `transcripts/` folder (MeetGeek timestamp when present; otherwise file mtime). Uses Claude and `coaching_note_prompt.md`.
+
+```bash
+python coaching_note.py <folder> [--dry-run]
+```
+
+**Example:**
+
+```bash
+python coaching_note.py Central-Agent
+```
+
+`--dry-run` prints which transcript would be used without calling the API.
+
+**Output:** `portcos/<folder>/ai-generated/coaching_note.md`
 
 **Requires:** `ANTHROPIC_API_KEY`, `GOOGLE_DRIVE_BASE`
 
