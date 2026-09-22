@@ -98,3 +98,42 @@ section {
 section > div {
   margin-top: 0.5rem;
 }
+
+.status-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.status-filter {
+  appearance: none;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #1a1a1a;
+  border-radius: 999px;
+  padding: 0.25rem 0.8rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.status-filter:hover {
+  border-color: #9ca3af;
+}
+
+.status-filter.is-active {
+  background: #1a56db;
+  border-color: #1a56db;
+  color: #fff;
+}
+
+.status-filter-count {
+  margin: 0 0 0.25rem;
+  font-size: 0.9rem;
+  color: #4b5563;
+}
+
+tbody tr.is-filtered-out {
+  display: none;
+}

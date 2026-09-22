@@ -114,12 +114,111 @@ def link_deal_names_in_status_table(
     return "\n".join(output_lines) + ("\n" if markdown_text.endswith("\n") else "")
 
 
+DEAL_STATUS_FILTERS = (
+    ("IN RESIDENCY", "In residency"),
+    ("COURTING", "Courting"),
+    ("PIPELINE", "Pipeline"),
+    ("MONITOR", "Monitor"),
+    ("REJECTED", "Rejected"),
+    ("unknown", "Unknown"),
+)
+
+DEALS_FILTER_SCRIPT = """
+(function () {
+  const filters = document.querySelector(".status-filters");
+  if (!filters) return;
+
+  const buttons = Array.from(filters.querySelectorAll(".status-filter"));
+  const rows = Array.from(document.querySelectorAll(".content table tbody tr"));
+  const countEl = document.querySelector(".status-filter-count");
+  const allButton = buttons.find((button) => !button.dataset.status);
+
+  function rowStatus(row) {
+    const cell = row.querySelector("td:nth-child(2)");
+    return (cell ? cell.textContent : "").trim();
+  }
+
+  function selectedStatuses() {
+    return buttons
+      .filter((button) => button.dataset.status && button.classList.contains("is-active"))
+      .map((button) => button.dataset.status);
+  }
+
+  function apply() {
+    const selected = selectedStatuses();
+    const showAll = selected.length === 0;
+    let visible = 0;
+    rows.forEach((row) => {
+      const match = showAll || selected.includes(rowStatus(row));
+      row.classList.toggle("is-filtered-out", !match);
+      if (match) visible += 1;
+    });
+    if (allButton) allButton.classList.toggle("is-active", showAll);
+    if (countEl) {
+      countEl.hidden = showAll;
+      countEl.textContent = visible + " of " + rows.length + " deals";
+    }
+  }
+
+  const counts = {};
+  rows.forEach((row) => {
+    const status = rowStatus(row);
+    counts[status] = (counts[status] || 0) + 1;
+  });
+  buttons.forEach((button) => {
+    const label = button.textContent.trim();
+    if (!button.dataset.status) {
+      button.textContent = label + " (" + rows.length + ")";
+      return;
+    }
+    button.textContent = label + " (" + (counts[button.dataset.status] || 0) + ")";
+  });
+
+  filters.addEventListener("click", (event) => {
+    const button = event.target.closest(".status-filter");
+    if (!button) return;
+    if (!button.dataset.status) {
+      buttons.forEach((item) => item.classList.toggle("is-active", !item.dataset.status));
+    } else {
+      button.classList.toggle("is-active");
+      if (allButton) allButton.classList.remove("is-active");
+      if (selectedStatuses().length === 0 && allButton) {
+        allButton.classList.add("is-active");
+      }
+    }
+    apply();
+  });
+
+  apply();
+})();
+""".strip()
+
+
+def deals_filter_controls_html() -> str:
+    buttons = [
+        '    <button type="button" class="status-filter is-active">All</button>'
+    ]
+    for status, label in DEAL_STATUS_FILTERS:
+        buttons.append(
+            "    <button type=\"button\" class=\"status-filter\" "
+            f"data-status=\"{html.escape(status, quote=True)}\">"
+            f"{html.escape(label)}</button>"
+        )
+    return (
+        '<div class="status-filters" role="group" aria-label="Filter by status">\n'
+        + "\n".join(buttons)
+        + "\n</div>\n"
+        '<p class="status-filter-count" hidden></p>\n'
+    )
+
+
 def build_website_page(
     title: str,
     body_html: str,
     *,
     back_href: str | None = None,
     back_label: str | None = None,
+    extra_script: str | None = None,
 ) -> str:
     styles = load_styles()
     page_title = html.escape(title)
@@ -130,6 +229,9 @@ def build_website_page(
         )
     else:
         nav_html = ""
+    script_html = ""
+    if extra_script:
+        script_html = f"  <script>\n{extra_script}\n  </script>\n"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -147,7 +249,7 @@ def build_website_page(
 {body_html}
     </div>
   </main>
-</body>
+{script_html}</body>
 </html>
 """
 
@@ -238,12 +340,15 @@ def generate_deals_page(
 
     status_text = status_path.read_text(encoding="utf-8")
     linked_status = link_deal_names_in_status_table(status_text, linked_deal_names)
-    body_html = markdown_to_html(linked_status, demote_h1=False)
+    body_html = deals_filter_controls_html() + markdown_to_html(
+        linked_status, demote_h1=False
+    )
     document_html = build_website_page(
         "Deal Portfolio",
         body_html,
         back_href="index.html",
         back_label="← Home",
+        extra_script=DEALS_FILTER_SCRIPT,
     )
 
     output_path = website_dir / "deals.html"
