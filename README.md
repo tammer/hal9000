@@ -400,7 +400,7 @@ python coaching_note.py Central-Agent
 
 ### `summarizer.py`
 
-Reads every deal's `ai-generated/summary.md`, extracts structured fields (product, founders, status) with Groq, and writes a portfolio status table.
+Reads every deal's `ai-generated/summary.md`, extracts structured fields (product, founders, notes) with Groq, parses the enumerated `Status:` line (`IN RESIDENCY`, `COURTING`, `PIPELINE`, `MONITOR`, `REJECTED`; `unknown` if missing), and writes a portfolio status table.
 
 ```bash
 python summarizer.py

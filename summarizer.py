@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,19 +15,32 @@ from paths import deals_base, list_company_folders, shared_ai_dir
 
 DEFAULT_MODEL = "openai/gpt-oss-120b"
 
+KNOWN_STATUSES = (
+    "IN RESIDENCY",
+    "COURTING",
+    "PIPELINE",
+    "MONITOR",
+    "REJECTED",
+)
+STATE_SECTION_RE = re.compile(
+    r"^##[ \t]+State\b[^\n]*\n(.*?)(?=^#{1,2}[ \t]|\Z)",
+    re.MULTILINE | re.DOTALL | re.IGNORECASE,
+)
+STATUS_LINE_RE = re.compile(r"^Status:\s*(.+?)\s*$", re.IGNORECASE)
+
 EXTRACTOR_SYSTEM_PROMPT = """You extract structured deal information from an investment summary markdown document.
 
 Return valid JSON only with this exact shape:
 {
   "product": "1-2 sentence product summary",
   "founders": "founder name(s), brief",
-  "status": "brief deal status, 25-40 words max. Get this information from the # State section. Include data of last interaction if available in the state section"
+  "notes": "brief deal status, 25-40 words max. Get this information from the # State section. Include date of last interaction if available in the state section"
 }
 
 Extraction rules:
 - product: summarize from the # Product section
 - founders: from the Company table Founders row; use plain names only (no markdown links)
-- status: from the # State section; keep concise
+- notes: from the # State section; keep concise. Do not copy the enumerated Status line (IN RESIDENCY / COURTING / PIPELINE / MONITOR / REJECTED); summarize the surrounding state narrative.
 - If a field is missing from the summary, use an empty string
 """
 
@@ -34,13 +48,41 @@ Extraction rules:
 @dataclass(frozen=True)
 class DealRow:
     deal_name: str
+    status: str
     product: str
     founders: str
-    status: str
+    notes: str
 
 
 def summary_path_for_deal(deal_folder: Path) -> Path:
     return deal_folder / "ai-generated" / "summary.md"
+
+
+def _canonical_status(raw: str) -> str | None:
+    cleaned = re.sub(r"[*`_\"']+", " ", raw)
+    cleaned = " ".join(cleaned.upper().split())
+    if not cleaned:
+        return None
+    for status in sorted(KNOWN_STATUSES, key=len, reverse=True):
+        if cleaned == status:
+            return status
+        if cleaned.startswith(status) and not cleaned[len(status)].isalnum():
+            return status
+    return None
+
+
+def parse_deal_status(summary_text: str) -> str:
+    section_match = STATE_SECTION_RE.search(summary_text)
+    haystack = section_match.group(1) if section_match else summary_text
+    for line in haystack.splitlines():
+        normalized = re.sub(r"[*_`]", "", line.strip())
+        match = STATUS_LINE_RE.match(normalized)
+        if not match:
+            continue
+        status = _canonical_status(match.group(1))
+        if status:
+            return status
+    return "unknown"
 
 
 def escape_table_cell(text: str) -> str:
@@ -48,17 +90,18 @@ def escape_table_cell(text: str) -> str:
 
 
 def render_status_table(rows: list[DealRow]) -> str:
-    header = "| Deal Name | Product | Founder(s) | Status |"
-    separator = "|-----------|---------|------------|--------|"
+    header = "| Deal Name | Status | Product | Founder(s) | Notes |"
+    separator = "|-----------|--------|---------|------------|-------|"
     body_lines = [
         "| "
         + " | ".join(
             escape_table_cell(value)
             for value in (
                 row.deal_name,
+                row.status,
                 row.product,
                 row.founders,
-                row.status,
+                row.notes,
             )
         )
         + " |"
@@ -84,9 +127,10 @@ def extract_deal_row(
     payload = parse_json_response(response.choices[0].message.content or "")
     return DealRow(
         deal_name=deal_name,
+        status=parse_deal_status(summary_text),
         product=str(payload.get("product", "")).strip(),
         founders=str(payload.get("founders", "")).strip(),
-        status=str(payload.get("status", "")).strip(),
+        notes=str(payload.get("notes") or payload.get("status") or "").strip(),
     )
 
 

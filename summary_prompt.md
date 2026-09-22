@@ -14,12 +14,13 @@ Output the following information in this form:
 
 ## State
 
-Status: one of "IN RESIDENCY" or "PIPELINE" or "MONITOR" or "REJECTED"
+Status: one of "IN RESIDENCY" or "COURTING" or "PIPELINE" or "MONITOR" or "REJECTED"
 
 In residency means the founders have been admitted to residency and we're working towards trying to invest.
 Pipeline means we're still talking to them and trying to decide whether to put them in residency or reject them.
-Monitor means we've decided that they might have potential sometime in the future, but not at this stage.
+Monitor means we've decided that they might have potential sometime in the future, but not at this stage. sometimes referred to at "nurturing"
 Rejected means we have passed on the opportunity, and we don't want involvement with this deal.
+COURTING means that we would like to invest in this deal, but the founders are not wanting to take our money at this stage.
 
 Based on all known information, what's the state of things with this deal. Do your best to figure this out, but make sure you are clear if you are making assumptions or inferences.
 Be very concise in this section. 25 - 40 words max.

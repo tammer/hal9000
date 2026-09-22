@@ -19,7 +19,7 @@ DEFAULT_MODEL = "openai/gpt-oss-120b"
 SYSTEM_PROMPT = """You are an expert venture capital analyst reviewing a meeting transcript.
 
 You are given:
-1. A deal catalog (status.md) listing active deals with Deal Name, Product, Founder(s), and Status.
+1. A deal catalog (status.md) listing active deals with Deal Name, Status, Product, Founder(s), and Notes.
 2. A MeetGeek meeting transcript.
 
 Identify which catalog deals were discussed in the meeting and extract what was said and decided.
