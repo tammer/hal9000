@@ -131,29 +131,28 @@ DEALS_FILTER_SCRIPT = """
   const buttons = Array.from(filters.querySelectorAll(".status-filter"));
   const rows = Array.from(document.querySelectorAll(".content table tbody tr"));
   const countEl = document.querySelector(".status-filter-count");
-  const allButton = buttons.find((button) => !button.dataset.status);
 
   function rowStatus(row) {
     const cell = row.querySelector("td:nth-child(2)");
     return (cell ? cell.textContent : "").trim();
   }
 
-  function selectedStatuses() {
-    return buttons
-      .filter((button) => button.dataset.status && button.classList.contains("is-active"))
-      .map((button) => button.dataset.status);
-  }
-
   function apply() {
-    const selected = selectedStatuses();
-    const showAll = selected.length === 0;
+    const active = buttons.find((button) => button.classList.contains("is-active"));
+    const selected = active && active.dataset.status ? active.dataset.status : "";
+    const showAll = !selected;
     let visible = 0;
     rows.forEach((row) => {
-      const match = showAll || selected.includes(rowStatus(row));
+      const match = showAll || rowStatus(row) === selected;
       row.classList.toggle("is-filtered-out", !match);
       if (match) visible += 1;
     });
-    if (allButton) allButton.classList.toggle("is-active", showAll);
+    buttons.forEach((button) => {
+      button.setAttribute(
+        "aria-checked",
+        button.classList.contains("is-active") ? "true" : "false"
+      );
+    });
     if (countEl) {
       countEl.hidden = showAll;
       countEl.textContent = visible + " of " + rows.length + " deals";
@@ -177,15 +176,7 @@ DEALS_FILTER_SCRIPT = """
   filters.addEventListener("click", (event) => {
     const button = event.target.closest(".status-filter");
     if (!button) return;
-    if (!button.dataset.status) {
-      buttons.forEach((item) => item.classList.toggle("is-active", !item.dataset.status));
-    } else {
-      button.classList.toggle("is-active");
-      if (allButton) allButton.classList.remove("is-active");
-      if (selectedStatuses().length === 0 && allButton) {
-        allButton.classList.add("is-active");
-      }
-    }
+    buttons.forEach((item) => item.classList.toggle("is-active", item === button));
     apply();
   });
 
@@ -196,16 +187,18 @@ DEALS_FILTER_SCRIPT = """
 
 def deals_filter_controls_html() -> str:
     buttons = [
-        '    <button type="button" class="status-filter is-active">All</button>'
+        '    <button type="button" class="status-filter is-active" '
+        'role="radio" aria-checked="true">All</button>'
     ]
     for status, label in DEAL_STATUS_FILTERS:
         buttons.append(
-            "    <button type=\"button\" class=\"status-filter\" "
+            "    <button type=\"button\" class=\"status-filter\" role=\"radio\" "
+            "aria-checked=\"false\" "
             f"data-status=\"{html.escape(status, quote=True)}\">"
             f"{html.escape(label)}</button>"
         )
     return (
-        '<div class="status-filters" role="group" aria-label="Filter by status">\n'
+        '<div class="status-filters" role="radiogroup" aria-label="Filter by status">\n'
         + "\n".join(buttons)
         + "\n</div>\n"
         '<p class="status-filter-count" hidden></p>\n'
