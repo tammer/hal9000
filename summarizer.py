@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -116,22 +117,46 @@ def extract_deal_row(
     deal_name: str,
     summary_text: str,
 ) -> DealRow:
-    response = client.chat.completions.create(
-        model=model,
-        temperature=0.2,
-        messages=[
-            {"role": "system", "content": EXTRACTOR_SYSTEM_PROMPT},
-            {"role": "user", "content": summary_text},
-        ],
-    )
-    payload = parse_json_response(response.choices[0].message.content or "")
-    return DealRow(
-        deal_name=deal_name,
-        status=parse_deal_status(summary_text),
-        product=str(payload.get("product", "")).strip(),
-        founders=str(payload.get("founders", "")).strip(),
-        notes=str(payload.get("notes") or payload.get("status") or "").strip(),
-    )
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": EXTRACTOR_SYSTEM_PROMPT},
+        {"role": "user", "content": summary_text},
+    ]
+    last_error: json.JSONDecodeError | None = None
+    for attempt in range(2):
+        response = client.chat.completions.create(
+            model=model,
+            temperature=0.2,
+            messages=messages,
+        )
+        content = response.choices[0].message.content or ""
+        try:
+            payload = parse_json_response(content)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            if attempt == 0:
+                messages.append({"role": "assistant", "content": content})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous response was not valid JSON. "
+                            "Return only valid JSON with no commentary."
+                        ),
+                    }
+                )
+                continue
+            raise
+
+        return DealRow(
+            deal_name=deal_name,
+            status=parse_deal_status(summary_text),
+            product=str(payload.get("product", "")).strip(),
+            founders=str(payload.get("founders", "")).strip(),
+            notes=str(payload.get("notes") or payload.get("status") or "").strip(),
+        )
+
+    assert last_error is not None
+    raise last_error
 
 
 def main() -> int:

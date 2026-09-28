@@ -310,6 +310,57 @@ def extract_json_object(text: str) -> str | None:
     return None
 
 
+_JSON_SIMPLE_ESCAPES = frozenset('"\\/bfnrt')
+
+
+def repair_invalid_json_escapes(text: str) -> str:
+    """Drop backslashes that are not valid JSON escapes, so \\$ becomes $."""
+    result: list[str] = []
+    in_string = False
+    index = 0
+    length = len(text)
+
+    while index < length:
+        char = text[index]
+        if not in_string:
+            result.append(char)
+            if char == '"':
+                in_string = True
+            index += 1
+            continue
+
+        if char != "\\":
+            result.append(char)
+            if char == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if index + 1 >= length:
+            index += 1
+            continue
+
+        nxt = text[index + 1]
+        if nxt in _JSON_SIMPLE_ESCAPES:
+            result.append("\\")
+            result.append(nxt)
+            index += 2
+            continue
+
+        if (
+            nxt == "u"
+            and index + 5 < length
+            and all(c in "0123456789abcdefABCDEF" for c in text[index + 2 : index + 6])
+        ):
+            result.append(text[index : index + 6])
+            index += 6
+            continue
+
+        index += 1
+
+    return "".join(result)
+
+
 def escape_control_characters_in_json(text: str) -> str:
     result: list[str] = []
     in_string = False
@@ -365,7 +416,9 @@ def parse_json_response(content: str) -> dict[str, Any]:
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
-        repaired = escape_control_characters_in_json(candidate)
+        repaired = escape_control_characters_in_json(
+            repair_invalid_json_escapes(candidate)
+        )
         return json.loads(repaired)
 
 

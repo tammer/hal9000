@@ -10,7 +10,12 @@ from typing import Any, Literal
 
 from dotenv import load_dotenv
 
-from get_facts import FACT_EXTRACTOR_MODEL, SEARCH_PLANNER_MODEL, get_facts
+from get_facts import (
+    FACT_EXTRACTOR_MODEL,
+    SEARCH_PLANNER_MODEL,
+    get_facts,
+    repair_invalid_json_escapes,
+)
 
 # Supervisor model (answer synthesis + stop/continue decisions)
 SUPERVISOR_MODEL = "claude-sonnet-4-6"
@@ -202,7 +207,9 @@ def parse_json_response(content: str) -> dict[str, Any]:
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
-        repaired = escape_control_characters_in_json(candidate)
+        repaired = escape_control_characters_in_json(
+            repair_invalid_json_escapes(candidate)
+        )
         return json.loads(repaired)
 
 
