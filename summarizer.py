@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from get_facts import parse_json_response
 from paths import deals_base, list_company_folders, shared_ai_dir
 
 DEFAULT_MODEL = "openai/gpt-oss-120b"
+STATUS_CACHE_NAME = "status-cache.json"
 
 KNOWN_STATUSES = (
     "IN RESIDENCY",
@@ -57,6 +59,175 @@ class DealRow:
 
 def summary_path_for_deal(deal_folder: Path) -> Path:
     return deal_folder / "ai-generated" / "summary.md"
+
+
+def status_cache_path() -> Path:
+    return shared_ai_dir() / STATUS_CACHE_NAME
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def prompt_sha256() -> str:
+    return sha256_hex(EXTRACTOR_SYSTEM_PROMPT.encode("utf-8"))
+
+
+def load_status_cache(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Warning: ignoring unreadable status cache {path}: {exc}", file=sys.stderr)
+        return {}
+    if not isinstance(payload, dict):
+        print(
+            f"Warning: ignoring status cache {path} (expected an object)",
+            file=sys.stderr,
+        )
+        return {}
+    return payload
+
+
+def save_status_cache(path: Path, cache: dict[str, dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(cache, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _cache_strings(entry: dict[str, object]) -> tuple[str, str, str] | None:
+    product = entry.get("product")
+    founders = entry.get("founders")
+    notes = entry.get("notes")
+    if isinstance(product, str) and isinstance(founders, str) and isinstance(notes, str):
+        return product, founders, notes
+    return None
+
+
+def matching_cache_entry(
+    entry: object,
+    summary_hash: str,
+    model: str,
+    prompt_hash: str,
+) -> dict[str, object] | None:
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("summary_sha256") != summary_hash:
+        return None
+    if entry.get("model") != model:
+        return None
+    if entry.get("prompt_sha256") != prompt_hash:
+        return None
+    if _cache_strings(entry) is None:
+        return None
+    return entry
+
+
+def cache_entry_for_row(
+    summary_hash: str,
+    model: str,
+    prompt_hash: str,
+    row: DealRow,
+) -> dict[str, str]:
+    return {
+        "summary_sha256": summary_hash,
+        "model": model,
+        "prompt_sha256": prompt_hash,
+        "product": row.product,
+        "founders": row.founders,
+        "notes": row.notes,
+    }
+
+
+def row_from_cache(
+    deal_name: str,
+    summary_text: str,
+    entry: dict[str, object],
+) -> DealRow:
+    product, founders, notes = _cache_strings(entry) or ("", "", "")
+    return DealRow(
+        deal_name=deal_name,
+        status=parse_deal_status(summary_text),
+        product=product,
+        founders=founders,
+        notes=notes,
+    )
+
+
+def _copy_cache_entry(entry: object) -> dict[str, object] | None:
+    if isinstance(entry, dict):
+        return dict(entry)
+    return None
+
+
+def assemble_status(
+    summaries: list[tuple[str, str, str]],
+    previous_cache: dict[str, object],
+    client: Groq,
+    model: str,
+    *,
+    preserve_deals: set[str] | None = None,
+) -> tuple[list[DealRow], dict[str, dict[str, object]], int, int]:
+    """Build status rows and the cache to write.
+
+    ``summaries`` is ``(deal_name, summary_text, summary_sha256)``. A hit reuses
+    product, founders, and notes. Status is always parsed from the current
+    summary. Failed extractions keep the previous cache entry. Deals absent
+    from ``summaries`` are dropped unless listed in ``preserve_deals``.
+    """
+    prompt_hash = prompt_sha256()
+    rows: list[DealRow] = []
+    new_cache: dict[str, dict[str, object]] = {}
+    cached = 0
+    extracted = 0
+
+    for deal_name, summary_text, summary_hash in summaries:
+        previous = previous_cache.get(deal_name)
+        hit = matching_cache_entry(previous, summary_hash, model, prompt_hash)
+        if hit is not None:
+            print(f"Cached {deal_name}", file=sys.stderr)
+            copied = _copy_cache_entry(hit)
+            if copied is None:
+                continue
+            rows.append(row_from_cache(deal_name, summary_text, copied))
+            new_cache[deal_name] = copied
+            cached += 1
+            continue
+
+        print(f"Extracting {deal_name}...", file=sys.stderr)
+        try:
+            row = extract_deal_row(client, model, deal_name, summary_text)
+        except Exception as exc:
+            print(
+                f"Warning: failed to extract data for {deal_name}: {exc}",
+                file=sys.stderr,
+            )
+            copied = _copy_cache_entry(previous)
+            if copied is not None:
+                new_cache[deal_name] = copied
+            continue
+
+        rows.append(row)
+        new_cache[deal_name] = cache_entry_for_row(
+            summary_hash, model, prompt_hash, row
+        )
+        extracted += 1
+
+    for deal_name in preserve_deals or ():
+        if deal_name in new_cache:
+            continue
+        copied = _copy_cache_entry(previous_cache.get(deal_name))
+        if copied is not None:
+            new_cache[deal_name] = copied
+
+    rows.sort(key=lambda row: row.deal_name.lower())
+    ordered_cache = dict(
+        sorted(new_cache.items(), key=lambda item: item[0].lower())
+    )
+    return rows, ordered_cache, cached, extracted
 
 
 def _canonical_status(raw: str) -> str | None:
@@ -180,28 +351,42 @@ def main() -> int:
     model = os.getenv("GROQ_MODEL", DEFAULT_MODEL)
     client = Groq(api_key=api_key)
 
-    rows: list[DealRow] = []
+    cache_path = status_cache_path()
+    previous_cache = load_status_cache(cache_path)
+    summaries: list[tuple[str, str, str]] = []
+    preserve_deals: set[str] = set()
     for deal_folder in list_company_folders(base):
         summary_path = summary_path_for_deal(deal_folder)
         if not summary_path.is_file():
             continue
-
-        print(f"Processing {deal_folder.name}...", file=sys.stderr)
         try:
-            summary_text = summary_path.read_text(encoding="utf-8")
-            row = extract_deal_row(client, model, deal_folder.name, summary_text)
-            rows.append(row)
-        except Exception as exc:
+            raw = summary_path.read_bytes()
+            summary_text = raw.decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
             print(
-                f"Warning: failed to extract data for {deal_folder.name}: {exc}",
+                f"Warning: failed to read {summary_path}: {exc}",
                 file=sys.stderr,
             )
+            preserve_deals.add(deal_folder.name)
+            continue
+        summaries.append((deal_folder.name, summary_text, sha256_hex(raw)))
 
-    rows.sort(key=lambda row: row.deal_name.lower())
+    rows, new_cache, cached, extracted = assemble_status(
+        summaries,
+        previous_cache,
+        client,
+        model,
+        preserve_deals=preserve_deals,
+    )
+
     output_path = shared_ai_dir() / "status.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_status_table(rows), encoding="utf-8")
-    print(f"Wrote {output_path} ({len(rows)} deals)", file=sys.stderr)
+    save_status_cache(cache_path, new_cache)
+    print(
+        f"Wrote {output_path} ({len(rows)} deals, {cached} cached, {extracted} extracted)",
+        file=sys.stderr,
+    )
     return 0
 
 

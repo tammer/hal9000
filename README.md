@@ -48,6 +48,7 @@ GOOGLE_DRIVE_BASE/                 # …/Shared drives/Canada
 ├── people/                        # ignored by tooling
 ├── ai-generated/                  # shared outputs
 │   ├── status.md                  # portfolio table (summarizer.py)
+│   ├── status-cache.json          # extraction cache keyed by summary hash
 │   └── dailies/
 │       ├── deals/YYYY-MM-DD.json
 │       ├── portcos/YYYY-MM-DD.json
@@ -402,13 +403,15 @@ python coaching_note.py Central-Agent
 
 Reads every deal's `ai-generated/summary.md`, extracts structured fields (product, founders, notes) with Groq, parses the enumerated `Status:` line (`IN RESIDENCY`, `COURTING`, `PIPELINE`, `MONITOR`, `REJECTED`; `unknown` if missing), and writes a portfolio status table.
 
+Unchanged summaries reuse the cached extraction. Groq runs again only when `summary.md` changes, or when the model or extractor prompt changes. Status is parsed from the summary on every run.
+
 ```bash
 python summarizer.py
 ```
 
-**Output:** `GOOGLE_DRIVE_BASE/ai-generated/status.md`.
+**Output:** `GOOGLE_DRIVE_BASE/ai-generated/status.md` and `GOOGLE_DRIVE_BASE/ai-generated/status-cache.json` (next to `status.md`).
 
-Deals without a summary are skipped. Failures for individual deals are logged as warnings; the script still writes the table for successful extractions.
+Deals without a summary are skipped. Failures for individual deals are logged as warnings and left out of the table; their previous cache entry is left unchanged so the next run retries. The script still writes the table for successful extractions.
 
 **Requires:** `GROQ_API_KEY`, `GOOGLE_DRIVE_BASE`
 
