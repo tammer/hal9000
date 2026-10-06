@@ -12,6 +12,11 @@ Produce a concise investment report.  Leave unknown fields blank rather than gue
 
 Output the following information in this form:
 
+## Source
+
+Was this deal INBOUND (founders applied to antler or came to us) or OUTBOUND (someone at Antler did something to find this deal). If outbound, give one sentence (if possible) on the channel.
+if you can't figure out the source, then just say "Unknown".
+
 ## State
 
 Status: one of "IN RESIDENCY" or "COURTING" or "PIPELINE" or "MONITOR" or "REJECTED"
